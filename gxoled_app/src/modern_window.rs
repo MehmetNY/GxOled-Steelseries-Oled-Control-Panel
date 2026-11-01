@@ -1,4 +1,4 @@
-//! Win32 host for the modern (beta) windows: the settings window and the profile (JSON) editor.
+//! Win32 host for the modern windows: the settings window and the profile (JSON) editor.
 //!
 //! The interface itself lives in the OS-independent `gxoled_ui` crate, which renders the whole window into an
 //! RGBA buffer and does its own hit testing. This module only owns the HWND: it forwards mouse, keyboard and

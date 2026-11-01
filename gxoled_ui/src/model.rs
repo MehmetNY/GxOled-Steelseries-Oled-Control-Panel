@@ -94,9 +94,12 @@ pub struct UiModel {
     pub profile_running: Option<usize>,
     /// 128×64 mirror of the OLED, row-major, `true` = lit pixel.
     pub oled: Vec<bool>,
+    /// `true` while `oled` is the frame the base station is really showing; `false` when it is only a preview
+    /// (no device frame available, or a GIF that was picked but is not playing yet).
+    pub oled_live: bool,
     pub connected: bool,
     pub device_name: String,
-    /// "v0.5.3 Beta" style label for the footer / info rows.
+    /// "v0.5.3" style label for the footer / info rows.
     pub version: String,
     pub qr: Option<Image>,
     /// Profile name shown under the editor heading (editor surface only).
@@ -122,6 +125,7 @@ impl Default for UiModel {
             profile_selected: 0,
             profile_running: None,
             oled: vec![false; OLED_W * OLED_H],
+            oled_live: true,
             connected: false,
             device_name: "SteelSeries Arctis Nova Pro Wireless".to_owned(),
             version: "v0.0.0".to_owned(),

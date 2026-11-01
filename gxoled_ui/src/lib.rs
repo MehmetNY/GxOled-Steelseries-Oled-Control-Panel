@@ -23,10 +23,9 @@ use engine::{Engine, Pixmap};
 use model::{Cursor, OLED_H, OLED_W, Page, Surface, UiEvent, UiModel};
 use scene::{Hit, HitKind, Overlay, OverlayKind, Rect, Scene};
 
-/// Width (design units) the layout was drawn for; the window scales the design proportionally to this.
+/// Width (design units) the layout is drawn for. The settings window is always laid out at exactly this width and
+/// the whole picture is scaled to the window, so resizing zooms the interface instead of re-flowing it.
 pub const DESIGN_W: f32 = 1450.0;
-pub const SCALE_MIN: f32 = 0.8;
-pub const SCALE_MAX: f32 = 1.15;
 const CONTENT_BOTTOM_PAD: f32 = 36.0;
 const DOUBLE_CLICK: Duration = Duration::from_millis(450);
 
@@ -130,14 +129,15 @@ impl Ui {
         }
     }
 
-    /// Pixels per design unit for the current window size.
-    pub fn scale_for(width_px: u32, dpi: f32) -> f32 {
-        let logical_w = width_px as f32 / dpi.max(0.5);
-        dpi.max(0.5) * (logical_w / DESIGN_W).clamp(SCALE_MIN, SCALE_MAX)
+    /// Pixels per design unit of the settings window: its client width divided by [`DESIGN_W`], with no lower or
+    /// upper limit, so every element keeps its place and proportions at any window size (the DPI factor is already
+    /// part of the pixel width). Heights beyond the window scroll.
+    pub fn scale_for(width_px: u32, _dpi: f32) -> f32 {
+        width_px.max(1) as f32 / DESIGN_W
     }
 
-    /// Pixels per design unit. The settings window scales proportionally with its width; the editor is a
-    /// plain dialog and only follows the DPI.
+    /// Pixels per design unit. The settings window zooms with its width; the editor is a plain dialog and only
+    /// follows the DPI.
     fn current_scale(&self) -> f32 {
         match self.model.surface {
             Surface::Settings => Self::scale_for(self.size_px.0, self.dpi),

@@ -2,7 +2,7 @@
 
 GxOled Advanced is GPL-3.0 software built on [JerwuQu/ggoled](https://github.com/JerwuQu/ggoled) and, for the
 animations, [pozitronik/steelclock-go](https://github.com/pozitronik/steelclock-go)
-(see [`go_animations/UPSTREAM.md`](go_animations/UPSTREAM.md)). The modern settings interface (v0.5.3 Beta,
+(see [`go_animations/UPSTREAM.md`](go_animations/UPSTREAM.md)). The modern settings interface (v0.5.3,
 crate `gxoled_ui`) adds the following material. All of it is under licences that permit use in a GPL-3.0 program.
 
 ## Embedded in the executable

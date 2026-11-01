@@ -50,6 +50,11 @@ impl<'a> Ctx<'a> {
         self.m.is_checked(id)
     }
 
+    /// Caption of the checked entry of a radio group (`"—"` when none is checked).
+    pub fn choice_label(&self, table: &[(u32, &'a str)]) -> &'a str {
+        table.iter().find(|(id, _)| self.checked(*id)).map(|(_, s)| *s).unwrap_or("—")
+    }
+
     pub fn hovered(&self, id: u32) -> bool {
         self.ix.hover == Some(id) && self.ix.pressed.is_none_or(|p| p == id)
     }

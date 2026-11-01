@@ -4,11 +4,11 @@
 Clock styles, burn-in mitigation, SteelClock-Go animations, GIF playback, brightness controls, and a native Windows settings window — built on [JerwuQu/ggoled](https://github.com/JerwuQu/ggoled).
 
 <p align="center">
-  <img src="docs/images/gxoled-advanced-main.png" alt="GxOled Advanced native Windows settings — original General Control and Live OLED layout" width="900">
+  <img src="docs/images/gxoled-advanced-main.png" alt="GxOled Advanced classic Windows settings window — General Control and Live OLED layout" width="900">
 </p>
 
 <p align="center">
-  <a href="https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases/tag/v0.5.2"><strong>Download GxOled Advanced v0.5.2</strong></a>
+  <a href="https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases/tag/v0.5.3"><strong>Download GxOled Advanced v0.5.3</strong></a>
   &nbsp;·&nbsp;
   <a href="#features">Features</a>
   &nbsp;·&nbsp;
@@ -17,9 +17,7 @@ Clock styles, burn-in mitigation, SteelClock-Go animations, GIF playback, bright
   <a href="#developers--ai-agents">Developer guide</a>
 </p>
 
-> **Current release:** v0.5.2 is the **original-layout** Windows build; it fixes the late return of GxOled after turning the DAC volume knob and makes the volume-screen time selectable (1–5 s). The GIF Studio page currently offers GIF selection and playback; a multi-layer GIF editor is **in development**, not part of this stable release. The application is unofficial and not affiliated with SteelSeries.
-
-> **Beta (optional):** [`v0.5.3-beta.2`](https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases/tag/v0.5.3-beta.2) is a **pre-release** with a completely redesigned, modern settings interface. It lives on the branch `release/v0.5.3-beta.2` (earlier: `release/v0.5.3-beta`), not on `main`, and the classic window is still inside it: switch between the two any time from the tray menu (*Settings window style (Beta)*), from the *General* page of the modern window, from the *Modern UI (Beta)* button of the classic window, or with `--classic-ui` / `--modern-ui`. See [`docs/MODERN-UI-BETA.md`](docs/MODERN-UI-BETA.md). Third-party licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+> **Current release:** v0.5.3 brings a completely redesigned **modern settings interface** (sidebar, cards, a live 128 × 64 OLED mirror, English/Türkçe, dark/light). The window scales as a whole when resized, the mirror shows what the base station shows (all five clock styles, running GIFs and animations), and the General page ends in a *Settings Summary*. The previous window is still inside the same EXE and can be chosen at any time — tray icon → *Settings window style*, *General → Settings window*, the *Modern UI* button of the classic window, or `--classic-ui` / `--modern-ui` ([`docs/MODERN-UI.md`](docs/MODERN-UI.md)). It also contains the v0.5.2 fix for the late return of GxOled after turning the DAC volume knob and the selectable volume-screen time (1–5 s). The GIF Studio page offers GIF selection and playback; a multi-layer GIF editor is **in development**, not part of this release. The application is unofficial and not affiliated with SteelSeries. Third-party licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Features
 
@@ -28,11 +26,11 @@ Clock styles, burn-in mitigation, SteelClock-Go animations, GIF playback, bright
 - **SteelClock-Go animations** — **Matrix Rain**, **Hyperspace**, **Star Wars Intro**, and **Game of Life**, including editable/importable/exportable 128 × 64 JSON profiles. The original Go renderer runs as a helper; GxOled retains control of the USB/OLED connection.
 - **GIF playback & GIF Studio tab** — choose a GIF and start/stop its playback. A richer editor inspired by [GGIF-Studio](https://github.com/D4rkTT/GGIF-Studio) (timeline, layers, transforms, dithering) is planned and **not yet available** in v0.5.0.
 - **Display & daily controls** — device brightness levels 1–10, idle screensaver/stock display behavior, native volume overlay cooperation with a selectable hold time (**Display → Volume screen time**, 1–5 s, default 2.5 s), and optional media information.
-- **Native Windows settings** — original dark/light interface, English/Türkçe, Tray/Window/Hybrid modes, optional Windows startup, and saved preferences.
+- **Native Windows settings** — modern interface (default) or the classic window, dark/light, English/Türkçe, Tray/Window/Hybrid modes, optional Windows startup, and saved preferences.
 
 ## Screenshots
 
-The original Windows layout is pictured above. More screenshots from this project's existing gallery:
+The classic Windows layout (still selectable) is pictured above. More screenshots from this project's existing gallery:
 
 <table>
   <tr>
@@ -49,7 +47,7 @@ The original Windows layout is pictured above. More screenshots from this projec
 
 ## Get started
 
-1. Download the [**v0.5.2 Windows release**](https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases/tag/v0.5.2) (`GxOled.Advanced.v0.5.2.exe`; compare it with `SHA256SUMS.txt`).
+1. Download the [**v0.5.3 Windows release**](https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases/tag/v0.5.3) (`GxOled.Advanced.v0.5.3.exe`; compare it with `SHA256SUMS.txt`).
 2. Connect a supported **SteelSeries base station** over USB and run GxOled.
 3. Open **Settings** (using the tray icon or the configured window mode). Select **Clock**, **Animations**, **GIF Studio**, or **Display**.
 4. Use **Display → Clock burn-in protection** for clock movement, and **Display → OLED screen shift** for whole-screen shifting.
@@ -74,7 +72,8 @@ GxOled combines a Rust device backend, an SDL3/tray application, a native Win32 
 | `gxoled_draw/src/` | One-bit frame composition, GIF decoding, clocks, OLED screen shifting |
 | `gxoled_draw/src/casio.rs` | Casio-inspired 128 × 64 clock rendering |
 | `gxoled_app/src/main.rs` | Settings/configuration, tray events, clocks and animation state |
-| `gxoled_app/src/settings_window.rs` | **Original** native Windows settings UI — preserve its layout |
+| `gxoled_app/src/settings_window.rs` | **Classic** native Windows settings UI — preserve its layout; it stays selectable and is the automatic fallback |
+| `gxoled_ui/`, `gxoled_app/src/modern_window.rs`, `modern_ui.rs`, `settings_ui.rs` | Modern settings interface (toolkit, Win32 host, bridge, style switch) — see [`docs/MODERN-UI.md`](docs/MODERN-UI.md) |
 | `gxoled_app/src/go_bridge.rs` | Starts the Go helper and consumes raw monochrome frames |
 | `go_animations/internal/widget/` | Four upstream-derived SteelClock-Go animation implementations |
 | `go_animations/cmd/renderer/` | Headless Go process and embedded default animation profiles |
@@ -152,11 +151,11 @@ OLED protection **reduces risk**, not panel wear. Avoid leaving static imagery a
 </details>
 
 <details>
-<summary><strong>5. AI agent / contributor checklist — preserve the original UI</strong></summary>
+<summary><strong>5. AI agent / contributor checklist — keep the classic window intact</strong></summary>
 
 1. Read this README, [`CHANGELOG.md`](CHANGELOG.md), [`go_animations/UPSTREAM.md`](go_animations/UPSTREAM.md), then the target module. Establish whether a feature exists in **stable v0.5.0** before changing documentation.
-2. Use `v0.5.0` as the immutable release reference. Keep experiments on a separate feature branch. **Do not edit or redesign** the original Windows settings window merely to add a feature.
-3. The intended stable window uses **GENERAL CONTROL**, **CLOCK GALLERY**, and **LIVE OLED / MONOCHROME**; it is not the experimental card-grid **OLED CONTROL CENTER** layout. The reference screenshot is [`docs/images/gxoled-advanced-main.png`](docs/images/gxoled-advanced-main.png).
+2. Use `v0.5.0` as the immutable release reference. Keep experiments on a separate feature branch. **Do not edit or redesign** the classic Windows settings window merely to add a feature (the modern interface is in `gxoled_ui` and `modern_*.rs`).
+3. The classic window uses **GENERAL CONTROL**, **CLOCK GALLERY**, and **LIVE OLED / MONOCHROME**; it is not the experimental card-grid **OLED CONTROL CENTER** layout. The reference screenshot is [`docs/images/gxoled-advanced-main.png`](docs/images/gxoled-advanced-main.png).
 4. Preserve the Rust HID ownership model, 128 × 64 output dimensions, configuration compatibility, and licensing notices. Do not remove `go_animations/gxoled-animations.exe` while Rust embeds it.
 5. For changes to display or animations, run the Rust checks/tests/build and the applicable Go tests. Manually validate Win32 controls, tray behavior, live preview, reconnect, GIF timing, and the base station when hardware is available.
 6. Record validation honestly: **compiled**, **unit-tested**, and **verified on a physical base station** are different statuses. Prefer reproducible focused commits, explain UI deltas, and publish development previews separately from stable tags.

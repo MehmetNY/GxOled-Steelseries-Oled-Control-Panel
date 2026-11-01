@@ -130,7 +130,7 @@ fn right_column(c: &mut Ctx, l: &Layout, page: Page) -> f32 {
     }
     let live = chrome::live_panel(c, l.rx, y, l.rw);
     y = live.bottom() + GAP;
-    let card = if page == Page::General { chrome::quick_access(c, l.rx, y, l.rw) } else { setup_card(c, l.rx, y, l.rw) };
+    let card = if page == Page::General { chrome::settings_summary(c, l.rx, y, l.rw) } else { setup_card(c, l.rx, y, l.rw) };
     let f = chrome::footer_chip(c, l.rx, card.bottom() + GAP, l.rw);
     f.bottom()
 }
@@ -247,11 +247,11 @@ fn general(c: &mut Ctx, l: &Layout, y: f32) -> f32 {
     ry += 41.5;
     c.radio_row(Rect::new(col2 + 24.0, ry, hw - 48.0, 33.0), ids::QUIT_STOCK_UI, c.t("SteelSeries stock UI", "SteelSeries varsayılanı"), None);
 
-    // Interface style (beta) under the toggle card
+    // Settings-window style (modern / classic) under the toggle card
     let iy = if two { start.bottom() + GAP } else { close.bottom() + GAP };
     let ix = l.lx;
     let iface = Rect::new(ix, iy, hw, 141.0);
-    let by = c.card(iface, "app-window", Tone::Blue, c.t("Settings window (Beta)", "Ayar penceresi (Beta)"));
+    let by = c.card(iface, "app-window", Tone::Blue, c.t("Settings window", "Ayar penceresi"));
     let r1 = c.chip(ix + 24.0, by, 39.0, ids::UI_MODERN, "Modern", None, 0.0);
     c.chip(r1.right() + 14.0, by, 39.0, ids::UI_CLASSIC, c.t("Classic", "Klasik"), None, 0.0);
     left_bottom = left_bottom.max(iface.bottom()).max(close.bottom());

@@ -24,7 +24,7 @@ const ID_ABOUT_CREDITS:u32=723;
 const ID_ABOUT_COFFEE:u32=724;
 const ID_QR_METHOD:u32=725;
 const ID_QR_HINT:u32=726;
-// Beta: rail button that switches to the modern settings window (same id as the modern UI's 'Modern' chip).
+// Rail button that switches to the modern settings window (same id as the modern UI's 'Modern' chip).
 const ID_UI_MODERN:u32=392;
 const SB_VERT:i32=1;
 const SIF_RANGE:u32=0x0001;
@@ -574,7 +574,7 @@ fn update_labels(buttons:&[(u32,usize)], language:ConfigLanguage) {
             369 => "GitHub · MehmetNY/GxOled",
             ID_KOFI => "Ko-fi · Support GxOled",
             371 => if tr {"GxOled'den çık"}else{"Quit GxOled"},
-            ID_UI_MODERN => if tr {"Modern arayüz"}else{"Modern UI (Beta)"},
+            ID_UI_MODERN => if tr {"Modern arayüz"}else{"Modern UI"},
             372 => if tr {"Profili düzenle..."}else{"Edit selected profile..."},
             ID_PROFILE_SELECT => if tr {"Profili uygula"}else{"Use selected"},
             ID_PROFILE_NEW => if tr {"Yeni profil"}else{"New Profile"},
@@ -870,7 +870,7 @@ fn paint_panels(dc:Handle, s:&State,cw:i32,ch:i32){
         if s.page!=5 {
             draw_label(dc,"SteelSeries  •  128 x 64",
                 &Rect{left:p_x,top:346,right:cw-18,bottom:374},muted,false);
-            draw_label(dc,"GxOled Advanced v0.5.3 Beta 2",
+            draw_label(dc,"GxOled Advanced v0.5.3",
                 &Rect{left:p_x,top:395,right:cw-20,bottom:422},muted,false);
             rounded(dc,&Rect{left:p_x-4,top:458,right:cw-25,bottom:555},
                 if dark{color(30,35,43)}else{color(240,249,248)},border,16);
@@ -1150,8 +1150,8 @@ pub fn create(tx:Sender<MenuEvent>) -> Result<(),String> {
     let quit=control(hwnd,"BUTTON","Quit GxOled",371,8,365,114,31,WS_TABSTOP);
     if !font.is_null(){unsafe{SendMessageW(quit,WM_SETFONT,font as usize,1);}}
     buttons.push((371,quit as usize));
-    // Beta: a way back to the modern settings window from the classic one (visible on every page).
-    let modern=control(hwnd,"BUTTON","Modern UI (Beta)",ID_UI_MODERN,8,325,114,31,WS_TABSTOP);
+    // A way back to the modern settings window from the classic one (visible on every page).
+    let modern=control(hwnd,"BUTTON","Modern UI",ID_UI_MODERN,8,325,114,31,WS_TABSTOP);
     if !font.is_null(){unsafe{SendMessageW(modern,WM_SETFONT,font as usize,1);}}
     buttons.push((ID_UI_MODERN,modern as usize));
     let mut make=|tab:usize,kind:&str,label:&str,id:u32,x:i32,y:i32,w:i32,h:i32,style:u32| {
@@ -1379,6 +1379,15 @@ pub fn preview(bitmap:&gxoled_lib::Bitmap) {
     if let Some(hwnd) = hwnd {
         let region=Rect{left:SETTINGS_LEFT+SETTINGS_FORM+11,top:134,right:SETTINGS_WIDTH-12,bottom:335};
         unsafe{InvalidateRect(hwnd as Handle,&region,0);}
+    }
+}
+
+/// True while the classic window is on screen showing the GIF Studio page.
+pub fn gif_page_active() -> bool {
+    let state = STATE.get().and_then(|state| state.lock().ok().map(|s| (s.hwnd, s.page)));
+    match state {
+        Some((hwnd, page)) => page == 6 && unsafe { IsWindowVisible(hwnd as Handle) } != 0,
+        None => false,
     }
 }
 

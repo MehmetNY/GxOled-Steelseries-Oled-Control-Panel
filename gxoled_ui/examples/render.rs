@@ -56,7 +56,7 @@ pub fn sample(lang: Lang, dark: bool, page: Page) -> UiModel {
         profile_running: Some(0),
         oled: sample_oled(),
         connected: true,
-        version: "v0.5.3 Beta".into(),
+        version: "v0.5.3".into(),
         qr: Some(sample_qr()),
         ..UiModel::default()
     }

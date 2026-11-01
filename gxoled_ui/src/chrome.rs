@@ -122,7 +122,7 @@ fn header(c: &mut Ctx, w: f32) {
     c.sc.text_mid(x, cy, "128 X 64", &Text::new(13.5, 600, p.accent).spaced(2.0));
     let bar_x = x + c.eng.text_width("128 X 64", 13.5, 600, 2.0) + 21.0;
     c.sc.rect(Rect::new(bar_x, cy - 12.0, 1.0, 24.0), 0.0, p.divider);
-    let title = c.lang().upper(c.t("SteelSeries DAC OLED control", "SteelSeries DAC OLED kontrol"));
+    let title = c.lang().upper(c.t("SteelSeries Base Station Control Center", "SteelSeries Base Station Kontrol Merkezi"));
     c.sc.text_mid(bar_x + 20.0, cy, &title, &Text::new(13.5, 600, p.text).spaced(2.0));
     let dot = if c.m.connected { p.green } else { p.text_muted };
     let name = if c.m.connected {
@@ -147,9 +147,10 @@ pub fn live_panel(c: &mut Ctx, x: f32, y: f32, w: f32) -> Rect {
     let r = Rect::new(x, y, w, h);
     c.card_frame(r);
     let cy = y + 37.0;
-    let live = if c.m.connected { p.green } else { p.text_muted };
-    c.sc.circle(x + 30.0, cy, 4.5, live);
-    c.sc.text_mid(x + 46.0, cy, &c.lang().upper(c.t("Live OLED", "Canlı OLED")), &Text::new(12.5, 600, p.text_dim).spaced(1.9));
+    let live = c.m.connected && c.m.oled_live;
+    c.sc.circle(x + 30.0, cy, 4.5, if live { p.green } else { p.text_muted });
+    let title = if c.m.oled_live { c.t("Live OLED", "Canlı OLED") } else { c.t("OLED preview", "OLED önizleme") };
+    c.sc.text_mid(x + 46.0, cy, &c.lang().upper(title), &Text::new(12.5, 600, p.text_dim).spaced(1.9));
     let mono = c.lang().upper(c.t("Monochrome", "Monokrom"));
     c.badge(r.right() - 24.0, cy, &mono);
     // Black display with a hairline frame; the pixels themselves are composited after rasterisation.
@@ -180,50 +181,49 @@ pub fn footer_chip(c: &mut Ctx, x: f32, y: f32, w: f32) -> Rect {
     r
 }
 
-/// "Quick access" card of the General page: the three opening modes with descriptions.
-pub fn quick_access(c: &mut Ctx, x: f32, y: f32, w: f32) -> Rect {
+/// "Settings Summary" card of the General page: a read-only overview of the choices made on this page (the page itself
+/// holds the controls, so nothing is offered twice).
+pub fn settings_summary(c: &mut Ctx, x: f32, y: f32, w: f32) -> Rect {
     let p = c.p;
-    let desc = c.t(
-        "Tray, Window or Hybrid opening mode controls how GxOled appears when launched or restored.",
-        "Tepsi, Pencere veya Karma açılış modu, GxOled'in başlatıldığında ya da geri yüklendiğinde nasıl görüneceğini belirler.",
-    );
-    // The description wraps to two or three lines depending on language and width, so the card height follows it.
-    let h = 88.0 + c.paragraph_height(w - 48.0, desc, 15.0) + 10.0 + 3.0 * 62.0 + 2.0 * 11.0 + 12.0;
+    let h = SUMMARY_ROWS_TOP + 5.0 * SUMMARY_ROW_H + 4.0 * SUMMARY_ROW_GAP + 24.0;
     let r = Rect::new(x, y, w, h);
     c.card_frame(r);
-    c.sc.text_mid(x + 24.0, y + 36.0, &c.lang().upper(c.t("App mode", "Uygulama modu")), &Text::new(12.5, 600, p.accent).spaced(1.9));
-    c.sc.text_mid(x + 24.0, y + 63.0, c.t("Quick Access", "Hızlı Erişim"), &Text::new(16.0, 600, p.text));
+    c.sc.text_mid(x + 24.0, y + 36.0, &c.lang().upper(c.t("Overview", "Genel bakış")), &Text::new(12.5, 600, p.accent).spaced(1.9));
+    c.sc.text_mid(x + 24.0, y + 63.0, c.t("Settings Summary", "Ayar Özeti"), &Text::new(16.0, 600, p.text));
     c.sc.icon("zap", r.right() - 24.0 - 22.0, y + 28.0, 22.0, p.accent, 2.3);
-    let after = c.paragraph(x + 24.0, y + 88.0, w - 48.0, desc, 15.0, p.text_muted);
-    let modes = [
-        (ids::MODE_TRAY, "panel-left", Tone::Blue, c.t("Tray Mode", "Tepsi Modu"), c.t("Icon in system tray only", "Yalnızca sistem tepsisinde simge")),
-        (ids::MODE_WINDOW, "scan", Tone::Orange, c.t("Window Mode", "Pencere Modu"), c.t("Tray icon opens this window", "Tepsi simgesi bu pencereyi açar")),
-        (ids::MODE_HYBRID, "layers", Tone::Violet, c.t("Hybrid Mode", "Karma Mod"), c.t("Left = window, right = tray", "Sol = pencere, sağ = menü")),
+
+    let mode = c.choice_label(&[
+        (ids::MODE_TRAY, c.t("Tray menu", "Tepsi menüsü")),
+        (ids::MODE_WINDOW, c.t("Window", "Pencere")),
+        (ids::MODE_HYBRID, c.t("Hybrid", "Karma")),
+    ]);
+    let language = c.choice_label(&[(ids::LANG_EN, "English"), (ids::LANG_TR, "Türkçe")]);
+    let appearance = c.choice_label(&[(ids::THEME_LIGHT, c.t("Light", "Açık")), (ids::THEME_DARK, c.t("Dark", "Koyu"))]);
+    let startup_on = c.checked(ids::STARTUP);
+    let closing = c.choice_label(&[
+        (ids::QUIT_SCREENSAVER, c.t("Screensaver", "Ekran koruyucu")),
+        (ids::QUIT_STOCK_UI, c.t("SteelSeries stock UI", "SteelSeries varsayılanı")),
+    ]);
+    let startup = if startup_on { c.t("On", "Açık") } else { c.t("Off", "Kapalı") };
+    let rows = [
+        (c.t("Opening mode", "Açılış modu"), mode, p.accent),
+        (c.t("Language", "Dil"), language, p.text),
+        (c.t("Appearance", "Görünüm"), appearance, p.text),
+        (c.t("Start with Windows", "Windows ile başlat"), startup, if startup_on { p.green } else { p.text_muted }),
+        (c.t("When GxOled closes", "GxOled kapanırken"), closing, p.text),
     ];
-    let mut ry = after + 10.0;
-    for (id, icon, tone, title, sub) in modes {
-        let row = Rect::new(x + 24.0, ry, w - 48.0, 62.0);
-        let on = c.checked(id);
-        let (bg, border) = if on {
-            (p.sel_bg, p.sel_border)
-        } else if c.pressed(id) {
-            (p.sel_bg, p.sel_border)
-        } else if c.hovered(id) {
-            (p.row_hover, p.row_border)
-        } else {
-            (p.row, p.row_border)
-        };
-        c.sc.rect_border(row, 13.0, bg, border, 1.0);
-        c.icon_tile(row.x + 18.0, row.cy() - 17.5, 35.0, icon, tone);
-        c.sc.text_mid(row.x + 69.0, row.cy() - 10.0, title, &Text::new(14.5, 500, p.text));
-        let (sub_text, sub_color) = if on { (c.t("Currently active", "Şu anda etkin"), p.accent) } else { (sub, p.text_muted) };
-        c.sc.text_mid(row.x + 69.0, row.cy() + 11.5, sub_text, &Text::new(13.7, 400, sub_color));
-        if on {
-            c.sc.icon("check", row.right() - 38.0, row.cy() - 10.0, 20.0, p.accent, 2.6);
-        }
-        // Mirrors the opening-mode card on the General page, which owns keyboard focus for these ids.
-        c.sc.hit(row, id, HitKind::Click, false);
-        ry += 62.0 + 11.0;
+    let mut ry = y + SUMMARY_ROWS_TOP;
+    for (label, value, color) in rows {
+        let row = Rect::new(x + 24.0, ry, w - 48.0, SUMMARY_ROW_H);
+        c.sc.rect_border(row, 12.0, p.row, p.row_border, 1.0);
+        let value = c.fit(value, 14.5, 600, row.w * 0.55);
+        c.sc.text_mid(row.x + 18.0, row.cy(), label, &Text::new(14.5, 400, p.text));
+        c.sc.text_mid(row.right() - 18.0, row.cy(), &value, &Text::new(14.5, 600, color).end());
+        ry += SUMMARY_ROW_H + SUMMARY_ROW_GAP;
     }
     r
 }
+
+const SUMMARY_ROWS_TOP: f32 = 90.0;
+const SUMMARY_ROW_H: f32 = 44.0;
+const SUMMARY_ROW_GAP: f32 = 9.0;

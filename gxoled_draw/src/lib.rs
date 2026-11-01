@@ -399,6 +399,7 @@ fn run_draw_device_thread(
     cmd_receiver: Receiver<DrawCommand>,
     event_sender: Sender<DrawEvent>,
     texter: Arc<Mutex<TextRenderer>>,
+    preview: PreviewTap,
     fps: usize,
 ) -> Device {
     let fps = fps.max(1);
@@ -537,37 +538,18 @@ fn run_draw_device_thread(
                         media_visible,
                         turkish,
                     } => {
-                        let now = Local::now();
                         let texter = texter.lock();
-                        let bitmap = render_clock_bitmap(
+                        blit_clock(
+                            &mut screen,
                             &texter,
                             *style,
                             *twelve_hour,
                             *media_visible,
                             *turkish,
-                            now,
+                            Local::now(),
+                            (*x_offset, *y_offset),
+                            (shift_x, shift_y),
                         );
-                        let base_x = if bitmap.w >= dev.width {
-                            0
-                        } else {
-                            (dev.width as isize - bitmap.w as isize) / 2
-                        };
-                        let x = base_x + *x_offset;
-                        let y = match *style {
-                            ClockStyle::AnalogRound | ClockStyle::AnalogSquare if *media_visible => 4,
-                            ClockStyle::AnalogRound | ClockStyle::AnalogSquare => {
-                                (dev.height as isize - bitmap.h as isize) / 2
-                            }
-                            ClockStyle::DigitalOriginal | ClockStyle::DigitalBold if *media_visible => 4,
-                            ClockStyle::DigitalOriginal => {
-                                (dev.height as isize - texter.line_height() as isize) / 2
-                            }
-                            ClockStyle::CasioF91W => 0,
-                            ClockStyle::DigitalBold => {
-                                (dev.height as isize - texter.line_height_at_size(texter.size() * 1.48) as isize) / 2
-                            }
-                        } + *y_offset;
-                        screen.blit(&bitmap, x + shift_x, y + shift_y, false);
                     }
                     DrawLayer::Animation {
                         frames,
@@ -608,6 +590,9 @@ fn run_draw_device_thread(
             }
 
             drop(layers);
+
+            // Copy of exactly what is being shown, for the settings window's live OLED mirror.
+            *preview.lock() = Some((screen.clone(), Instant::now()));
 
             // Draw update
             let frame_time = Instant::now();
@@ -782,6 +767,90 @@ fn analog_clock_bitmap(style: ClockStyle, now: chrono::DateTime<Local>, size: us
     bitmap
 }
 
+type PreviewTap = Arc<Mutex<Option<(Bitmap, Instant)>>>;
+
+/// Draw a clock onto `screen` the way it appears on the OLED: centred horizontally and vertically for its style,
+/// moved by the burn-in offsets and finally by the OLED pixel shift.
+#[allow(clippy::too_many_arguments)]
+fn blit_clock(
+    screen: &mut Bitmap,
+    texter: &TextRenderer,
+    style: ClockStyle,
+    twelve_hour: bool,
+    media_visible: bool,
+    turkish: bool,
+    now: chrono::DateTime<Local>,
+    offset: (isize, isize),
+    shift: (isize, isize),
+) {
+    let (width, height) = (screen.w, screen.h);
+    let bitmap = render_clock_bitmap(texter, style, twelve_hour, media_visible, turkish, now);
+    let base_x = if bitmap.w >= width { 0 } else { (width as isize - bitmap.w as isize) / 2 };
+    let x = base_x + offset.0;
+    let y = match style {
+        ClockStyle::AnalogRound | ClockStyle::AnalogSquare if media_visible => 4,
+        ClockStyle::AnalogRound | ClockStyle::AnalogSquare => (height as isize - bitmap.h as isize) / 2,
+        ClockStyle::DigitalOriginal | ClockStyle::DigitalBold if media_visible => 4,
+        ClockStyle::DigitalOriginal => (height as isize - texter.line_height() as isize) / 2,
+        ClockStyle::CasioF91W => 0,
+        ClockStyle::DigitalBold => (height as isize - texter.line_height_at_size(texter.size() * 1.48) as isize) / 2,
+    } + offset.1;
+    screen.blit(&bitmap, x + shift.0, y + shift.1, false);
+}
+
+/// A full `width` x `height` screen showing only the clock, placed exactly like the render thread places it.
+#[allow(clippy::too_many_arguments)]
+pub fn render_clock_screen(
+    texter: &TextRenderer,
+    width: usize,
+    height: usize,
+    style: ClockStyle,
+    twelve_hour: bool,
+    media_visible: bool,
+    turkish: bool,
+    now: chrono::DateTime<Local>,
+    offset: (isize, isize),
+) -> Bitmap {
+    let mut screen = Bitmap::new(width, height, false);
+    blit_clock(&mut screen, texter, style, twelve_hour, media_visible, turkish, now, offset, (0, 0));
+    screen
+}
+
+/// Plays a GIF on a screen-sized bitmap without any device, for the settings window's OLED preview. Call
+/// [`GifPreview::screen`] repeatedly; it advances by the frame delays, the same way the render thread does.
+pub struct GifPreview {
+    frames: Vec<Frame>,
+    index: usize,
+    due: Option<Instant>,
+}
+
+impl GifPreview {
+    pub fn new(frames: Vec<Frame>) -> Option<Self> {
+        if frames.is_empty() {
+            None
+        } else {
+            Some(Self { frames, index: 0, due: None })
+        }
+    }
+
+    pub fn screen(&mut self, now: Instant, width: usize, height: usize) -> Bitmap {
+        match self.due {
+            None => self.due = Some(now + animation_frame_delay(&self.frames[0])),
+            Some(due) if now >= due => {
+                self.index = (self.index + 1) % self.frames.len();
+                self.due = Some(now + animation_frame_delay(&self.frames[self.index]));
+            }
+            _ => {}
+        }
+        let frame = &self.frames[self.index].bitmap;
+        let mut screen = Bitmap::new(width, height, false);
+        let x = (width as isize - frame.w as isize) / 2;
+        let y = (height as isize - frame.h as isize) / 2;
+        screen.blit(frame, x, y, false);
+        screen
+    }
+}
+
 fn render_clock_bitmap(
     texter: &TextRenderer,
     style: ClockStyle,
@@ -824,6 +893,7 @@ pub struct DrawDevice {
     cmd_sender: Sender<DrawCommand>,
     event_receiver: Receiver<DrawEvent>,
     pub texter: Arc<Mutex<TextRenderer>>,
+    preview: PreviewTap,
 }
 impl DrawDevice {
     pub fn new(dev: Device, fps: usize) -> DrawDevice {
@@ -833,9 +903,11 @@ impl DrawDevice {
         let c_layers = layers.clone();
         let texter = Arc::new(Mutex::new(TextRenderer::new_pixel_operator()));
         let render_texter = texter.clone();
+        let preview: PreviewTap = Default::default();
+        let render_preview = preview.clone();
         let (width, height) = (dev.width, dev.height);
         let thread = Some(std::thread::spawn(move || {
-            run_draw_device_thread(dev, c_layers, cmd_recver, event_sender, render_texter, fps)
+            run_draw_device_thread(dev, c_layers, cmd_recver, event_sender, render_texter, render_preview, fps)
         }));
         DrawDevice {
             width,
@@ -846,7 +918,26 @@ impl DrawDevice {
             cmd_sender,
             event_receiver,
             texter,
+            preview,
         }
+    }
+    /// The frame the render thread composed most recently, if it is no older than `max_age`. `None` while the
+    /// device is disconnected, while the base station shows its own volume screen, or before the first frame.
+    pub fn latest_frame(&self, max_age: Duration) -> Option<Bitmap> {
+        let guard = self.preview.lock();
+        let (bitmap, at) = guard.as_ref()?;
+        (at.elapsed() <= max_age).then(|| bitmap.clone())
+    }
+    /// What the OLED shows for a clock without media or notifications, for when no device frame is available.
+    pub fn clock_screen(
+        &self,
+        style: ClockStyle,
+        twelve_hour: bool,
+        turkish: bool,
+        offset: (isize, isize),
+    ) -> Bitmap {
+        let texter = self.texter.lock();
+        render_clock_screen(&texter, self.width, self.height, style, twelve_hour, false, turkish, Local::now(), offset)
     }
     fn destroy(&mut self) -> Option<Device> {
         if let Some(thread) = self.thread.take() {
@@ -1134,5 +1225,101 @@ mod volume_osd_dedup_tests {
         assert_eq!(clamp_volume_osd_hold(Duration::ZERO), Duration::from_millis(500));
         assert_eq!(clamp_volume_osd_hold(Duration::from_millis(1500)), Duration::from_millis(1500));
         assert_eq!(clamp_volume_osd_hold(Duration::from_secs(60)), Duration::from_secs(10));
+    }
+}
+
+#[cfg(test)]
+mod preview_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn at(h: u32, m: u32, s: u32) -> chrono::DateTime<Local> {
+        Local.with_ymd_and_hms(2026, 10, 30, h, m, s).single().expect("valid local time")
+    }
+
+    /// Bounding box (min_x, min_y, max_x, max_y) of the lit pixels.
+    fn bounds(b: &Bitmap) -> Option<(usize, usize, usize, usize)> {
+        let mut r: Option<(usize, usize, usize, usize)> = None;
+        for y in 0..b.h {
+            for x in 0..b.w {
+                if b.data[y * b.w + x] {
+                    r = Some(match r {
+                        None => (x, y, x, y),
+                        Some((a, bb, c, d)) => (a.min(x), bb.min(y), c.max(x), d.max(y)),
+                    });
+                }
+            }
+        }
+        r
+    }
+
+    const STYLES: [ClockStyle; 5] =
+        [ClockStyle::DigitalOriginal, ClockStyle::DigitalBold, ClockStyle::AnalogRound, ClockStyle::AnalogSquare, ClockStyle::CasioF91W];
+
+    #[test]
+    fn every_clock_style_renders_a_full_screen_with_lit_pixels() {
+        let texter = TextRenderer::new_pixel_operator();
+        for style in STYLES {
+            for twelve in [false, true] {
+                let screen = render_clock_screen(&texter, 128, 64, style, twelve, false, false, at(15, 47, 33), (0, 0));
+                assert_eq!((screen.w, screen.h), (128, 64), "{style:?}");
+                assert!(bounds(&screen).is_some(), "{style:?} 12h={twelve} drew nothing");
+            }
+        }
+    }
+
+    #[test]
+    fn different_clock_styles_look_different() {
+        let texter = TextRenderer::new_pixel_operator();
+        let shots: Vec<Bitmap> =
+            STYLES.iter().map(|s| render_clock_screen(&texter, 128, 64, *s, false, false, false, at(15, 47, 33), (0, 0))).collect();
+        for i in 0..shots.len() {
+            for j in i + 1..shots.len() {
+                assert!(shots[i] != shots[j], "{:?} and {:?} render identically", STYLES[i], STYLES[j]);
+            }
+        }
+    }
+
+    #[test]
+    fn the_clock_changes_with_the_time() {
+        let texter = TextRenderer::new_pixel_operator();
+        for style in STYLES {
+            let a = render_clock_screen(&texter, 128, 64, style, false, false, false, at(15, 47, 33), (0, 0));
+            let b = render_clock_screen(&texter, 128, 64, style, false, false, false, at(15, 47, 34), (0, 0));
+            assert!(a != b, "{style:?} does not change from one second to the next");
+        }
+    }
+
+    #[test]
+    fn digital_clocks_are_centred_and_follow_the_burn_in_offset() {
+        let texter = TextRenderer::new_pixel_operator();
+        for style in [ClockStyle::DigitalOriginal, ClockStyle::AnalogRound] {
+            let plain = render_clock_screen(&texter, 128, 64, style, false, false, false, at(10, 8, 9), (0, 0));
+            let (x0, y0, x1, y1) = bounds(&plain).unwrap();
+            let centre = ((x0 + x1) as f32 / 2.0, (y0 + y1) as f32 / 2.0);
+            assert!((centre.0 - 63.5).abs() <= 4.0, "{style:?} horizontal centre {centre:?}");
+            assert!((centre.1 - 31.5).abs() <= 8.0, "{style:?} vertical centre {centre:?}");
+            let moved = render_clock_screen(&texter, 128, 64, style, false, false, false, at(10, 8, 9), (5, 2));
+            let (mx0, my0, mx1, my1) = bounds(&moved).unwrap();
+            assert_eq!((mx0, my0, mx1, my1), (x0 + 5, y0 + 2, x1 + 5, y1 + 2), "{style:?} offset");
+        }
+    }
+
+    fn solid(w: usize, h: usize, delay_ms: u64) -> Frame {
+        Frame { bitmap: Arc::new(Bitmap::new(w, h, true)), delay: Some(Duration::from_millis(delay_ms)) }
+    }
+
+    #[test]
+    fn gif_preview_centres_frames_and_advances_by_their_delays() {
+        assert!(GifPreview::new(vec![]).is_none());
+        let mut gif = GifPreview::new(vec![solid(10, 6, 100), solid(20, 8, 250)]).unwrap();
+        let t0 = Instant::now();
+        let first = gif.screen(t0, 128, 64);
+        assert_eq!(bounds(&first), Some((59, 29, 68, 34)), "first frame is centred");
+        assert_eq!(bounds(&gif.screen(t0 + Duration::from_millis(99), 128, 64)), Some((59, 29, 68, 34)));
+        let second = gif.screen(t0 + Duration::from_millis(100), 128, 64);
+        assert_eq!(bounds(&second), Some((54, 28, 73, 35)), "second frame after its predecessor's delay");
+        assert_eq!(bounds(&gif.screen(t0 + Duration::from_millis(349), 128, 64)), Some((54, 28, 73, 35)));
+        assert_eq!(bounds(&gif.screen(t0 + Duration::from_millis(350), 128, 64)), Some((59, 29, 68, 34)), "wraps around");
     }
 }

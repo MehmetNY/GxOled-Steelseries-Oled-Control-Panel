@@ -3,7 +3,7 @@
 mod os;
 #[cfg(target_os = "windows")]
 mod settings_window;
-// Beta (v0.5.3): modern settings windows. `settings_window` (classic) stays the default-safe fallback.
+// Modern settings windows (v0.5.3). `settings_window` (classic) stays available and is the automatic fallback.
 #[cfg(target_os = "windows")]
 mod modern_window;
 #[cfg(target_os = "windows")]
@@ -106,8 +106,8 @@ enum ConfigUiMode {
     Hybrid,
 }
 
-/// Beta: which settings window the tray / settings button opens. Both always exist in the binary; only this
-/// setting (and the automatic fallbacks in `settings_ui`) decide, so going back is one click.
+/// Which settings window the tray / settings button opens. Both always exist in the binary; only this setting
+/// (and the automatic fallbacks in `settings_ui`) decides, so switching is one click either way.
 #[cfg(target_os = "windows")]
 #[derive(Serialize, Deserialize, Default, Clone, Copy, PartialEq, Eq, Debug)]
 enum ConfigUiStyle {
@@ -116,17 +116,9 @@ enum ConfigUiStyle {
     Classic,
 }
 
-/// "0.5.3-beta" -> "0.5.3 Beta", "0.5.3-beta.2" -> "0.5.3 Beta 2" (for labels); other versions are shown unchanged.
-fn display_version_of(version: &str) -> String {
-    match version.split_once("-beta") {
-        Some((base, "")) => format!("{base} Beta"),
-        Some((base, rest)) => format!("{base} Beta {}", rest.trim_start_matches('.')),
-        None => version.to_owned(),
-    }
-}
-
-fn display_version() -> String {
-    display_version_of(env!("CARGO_PKG_VERSION"))
+/// Version shown in labels and window captions.
+fn display_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -195,7 +187,7 @@ struct Config {
     time_mode: ConfigTimeMode,
     clock_style: ConfigClockStyle,
     ui_mode: ConfigUiMode,
-    // Beta: modern or classic settings window (older config files simply lack this key).
+    // Modern or classic settings window (config files of older versions simply lack this key).
     #[cfg(target_os = "windows")]
     ui_style: ConfigUiStyle,
     language: ConfigLanguage,
@@ -651,6 +643,25 @@ struct ClockPosition {
     rect: ClockRect,
 }
 
+/// Decode `path` for the OLED preview (once per file; `None` inside the slot = it could not be decoded) and return the
+/// frame to show now, centred on a blank screen.
+#[cfg(target_os = "windows")]
+fn gif_preview_screen(
+    slot: &mut Option<(PathBuf, Option<gxoled_draw::GifPreview>)>,
+    path: &std::path::Path,
+    width: usize,
+    height: usize,
+) -> Bitmap {
+    if slot.as_ref().is_none_or(|(loaded, _)| loaded != path) {
+        let frames = try_decode_gif_frames(&path.to_string_lossy(), 0x80).ok();
+        *slot = Some((path.to_owned(), frames.and_then(gxoled_draw::GifPreview::new)));
+    }
+    match slot.as_mut().and_then(|(_, gif)| gif.as_mut()) {
+        Some(gif) => gif.screen(Instant::now(), width, height),
+        None => Bitmap::new(width, height, false),
+    }
+}
+
 fn clock_layout(
     dev: &DrawDevice,
     text: &str,
@@ -1096,7 +1107,7 @@ fn main() {
     }
     #[cfg(target_os = "windows")]
     {
-        // Beta safety net. `--classic-ui` / `--modern-ui` force a style (and remember it); a previous modern start
+        // Safety net. `--classic-ui` / `--modern-ui` force a style (and remember it); a previous modern start
         // that never reached its first paint also falls back to the classic window.
         let args: Vec<String> = std::env::args().skip(1).collect();
         let before = config.ui_style;
@@ -1112,9 +1123,9 @@ fn main() {
                 .set_level(MessageLevel::Warning)
                 .set_title("GxOled")
                 .set_description(if turkish {
-                    "Modern (Beta) arayüz geçen sefer düzgün açılamadı; GxOled klasik arayüze döndü.\nTepsi menüsündeki 'Ayar penceresi biçimi (Beta)' ile tekrar deneyebilirsiniz."
+                    "Modern arayüz geçen sefer düzgün açılamadı; GxOled klasik arayüze döndü.\nTepsi menüsündeki 'Ayar penceresi biçimi' ile tekrar deneyebilirsiniz."
                 } else {
-                    "The modern (Beta) interface did not start properly last time, so GxOled went back to the classic one.\nYou can try it again from the tray menu: 'Settings window style (Beta)'."
+                    "The modern interface did not start properly last time, so GxOled went back to the classic one.\nYou can try it again from the tray menu: 'Settings window style'."
                 })
                 .show();
         }
@@ -1341,8 +1352,8 @@ fn main() {
     );
     #[cfg(target_os = "windows")]
     let tm_ui_style_radio = RadioMenu::new(
-        menu, c"Settings window style (Beta)",
-        &[(c"Modern (Beta)",ConfigUiStyle::Modern),(c"Classic",ConfigUiStyle::Classic)],
+        menu, c"Settings window style",
+        &[(c"Modern",ConfigUiStyle::Modern),(c"Classic",ConfigUiStyle::Classic)],
         config.ui_style, &menu_tx, MenuEvent::SetUiStyle,
     );
     #[cfg(target_os = "windows")]
@@ -1418,9 +1429,9 @@ fn main() {
             ConfigUiMode::Window=>set(*e,"Window","Pencere"),
             ConfigUiMode::Hybrid=>set(*e,"Hybrid","Karma"),
         }}
-        set(tm_ui_style_radio.title,"Settings window style (Beta)","Ayar penceresi biçimi (Beta)");
+        set(tm_ui_style_radio.title,"Settings window style","Ayar penceresi biçimi");
         for (e,value) in &tm_ui_style_radio.entries {match value {
-            ConfigUiStyle::Modern=>set(*e,"Modern (Beta)","Modern (Beta)"),
+            ConfigUiStyle::Modern=>set(*e,"Modern","Modern"),
             ConfigUiStyle::Classic=>set(*e,"Classic","Klasik"),
         }}
         set(tm_quit_mode_radio.title,"On app quit","Uygulama kapanırken");
@@ -1486,8 +1497,13 @@ fn main() {
     let mut go_frame: Option<Arc<Bitmap>> = None;
     #[cfg(target_os = "windows")]
     let mut go_last_attempt = Instant::now() - Duration::from_secs(3);
+    // Live OLED mirror of the settings window (see the preview block at the end of the loop).
     #[cfg(target_os = "windows")]
-    let mut last_preview_second=61u32;
+    let mut last_preview_tick = Instant::now() - Duration::from_secs(1);
+    #[cfg(target_os = "windows")]
+    let mut last_preview: Option<(Bitmap, bool)> = None;
+    #[cfg(target_os = "windows")]
+    let mut preview_gif: Option<(PathBuf, Option<gxoled_draw::GifPreview>)> = None;
     let mut last_clock_shift_minute: Option<i64> = None;
     let mut clock_offset: (isize, isize) = (0, 0);
     let mut last_clock_rect: Option<ClockRect> = None;
@@ -1981,7 +1997,6 @@ fn main() {
                             if let Some(id)=notif_layer.take(){dev.remove_layer(id);}
                             go_layer=Some(dev.add_layer(layer));
                         }
-                        settings_ui::preview(&bitmap);
                         go_frame=Some(bitmap);
                     }
                 }
@@ -2237,21 +2252,44 @@ fn main() {
             }
         }
 
+        // Live OLED mirror of the settings window. In order of preference:
+        //  1. the frame of a running Go animation;
+        //  2. the GIF that was picked on the GIF Studio page while it is not playing yet (a preview, not live);
+        //  3. the frame the render thread is really sending to the base station (live);
+        //  4. without a device frame (not connected, or the base station shows its own volume screen): what the
+        //     configured clock / GIF would look like (a preview).
         #[cfg(target_os = "windows")]
-        if time.second() != last_preview_second || force_redraw {
-            last_preview_second=time.second();
-            if let Some(frame)=&go_frame {settings_ui::preview(frame);}
-            else if config.clock_style == ConfigClockStyle::CasioF91W {
-                settings_ui::preview(&gxoled_draw::casio_clock_preview(config.time_mode==ConfigTimeMode::H12,config.language==ConfigLanguage::Turkish));
-            } else if config.time_mode!=ConfigTimeMode::Off {
-                let ts=Local::now().format("%H:%M:%S").to_string();
-                let bm=dev.render_lines_at_size(&ts,dev.text_size()).into_iter().next();
-                if let Some(bm)=bm {
-                    let mut preview=Bitmap::new(128,64,false);
-                    let(x,y)=dev.center_bitmap(&bm);
-                    preview.blit(&bm,x,y,false);
-                    settings_ui::preview(&preview);
-                }
+        if last_preview_tick.elapsed() >= Duration::from_millis(40) || force_redraw {
+            last_preview_tick = Instant::now();
+            let (screen_w, screen_h) = dev.dimensions();
+            let gif_path = config.animation_path.clone();
+            let gif_picked_only = !config.animation_playing && gif_path.is_some() && settings_ui::gif_page_active();
+            let gif_wanted = gif_picked_only || (config.animation_playing && gif_path.is_some());
+            if !gif_wanted || preview_gif.as_ref().is_some_and(|(p, _)| Some(p) != gif_path.as_ref()) {
+                preview_gif = None; // drop the decoded frames once they are not needed (or the file changed)
+            }
+            let (frame, live): (Bitmap, bool) = if let Some(frame) = &go_frame {
+                ((**frame).clone(), oled_available)
+            } else if let (true, Some(path)) = (gif_picked_only, &gif_path) {
+                (gif_preview_screen(&mut preview_gif, path, screen_w, screen_h), false)
+            } else if let Some(frame) = dev.latest_frame(Duration::from_millis(1500)) {
+                (frame, true)
+            } else if let (true, Some(path)) = (config.animation_playing, &gif_path) {
+                (gif_preview_screen(&mut preview_gif, path, screen_w, screen_h), false)
+            } else if config.time_mode != ConfigTimeMode::Off && config.go_animation.is_none() {
+                let clock = dev.clock_screen(
+                    config.clock_style.to_draw(),
+                    config.time_mode == ConfigTimeMode::H12,
+                    config.language == ConfigLanguage::Turkish,
+                    clock_offset,
+                );
+                (clock, false)
+            } else {
+                (Bitmap::new(screen_w, screen_h, false), false)
+            };
+            if last_preview.as_ref().is_none_or(|(old, was_live)| *old != frame || *was_live != live) {
+                settings_ui::preview(&frame, live);
+                last_preview = Some((frame, live));
             }
         }
         sleep(Duration::from_millis(10));
@@ -2298,18 +2336,6 @@ mod single_instance_tests {
     fn second_call_in_the_same_process_sees_the_mutex() {
         assert!(!another_instance_is_running());
         assert!(another_instance_is_running());
-    }
-}
-
-#[cfg(test)]
-mod display_version_tests {
-    use super::display_version_of;
-
-    #[test]
-    fn beta_versions_read_as_words_and_stable_ones_are_unchanged() {
-        assert_eq!(display_version_of("0.5.2"), "0.5.2");
-        assert_eq!(display_version_of("0.5.3-beta"), "0.5.3 Beta");
-        assert_eq!(display_version_of("0.5.3-beta.2"), "0.5.3 Beta 2");
     }
 }
 

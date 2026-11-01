@@ -1,4 +1,4 @@
-//! Beta: bridge between the modern windows (`modern_window` + the `gxoled_ui` crate) and the application.
+//! Bridge between the modern windows (`modern_window` + the `gxoled_ui` crate) and the application.
 //!
 //! Everything here runs on the main (UI) thread, so the state lives in thread-locals. It mirrors the classic
 //! `settings_window` one for one: the same control ids map to the same `MenuEvent`s, profiles are read from and
@@ -16,7 +16,7 @@ use std::{
 use gxoled_lib::Bitmap;
 use gxoled_ui::{
     Ui, ids,
-    model::{Image, Lang, UiEvent},
+    model::{Image, Lang, Page, UiEvent},
 };
 
 use super::{
@@ -52,6 +52,7 @@ struct Bridge {
     qr: Option<Image>,
     connected: bool,
     oled: Vec<bool>,
+    oled_live: bool,
     editor: Option<EditorCtx>,
 }
 
@@ -214,6 +215,7 @@ pub fn init(tx: Sender<MenuEvent>, config: &Config) {
             qr: None,
             connected: false,
             oled: vec![false; 128 * 64],
+            oled_live: true,
             editor: None,
         });
     });
@@ -259,7 +261,7 @@ fn on_first_paint(kind: Kind) {
 }
 
 fn settings_title() -> String {
-    t("GxOled — Settings (Beta)", "GxOled — Ayarlar (Beta)")
+    t("GxOled — Settings", "GxOled — Ayarlar")
 }
 
 fn labels(entries: &[ProfileEntry]) -> Vec<String> {
@@ -283,6 +285,7 @@ fn ensure_settings() -> Result<(), String> {
         ui.model.profiles = labels(&b.entries);
         ui.model.profile_selected = b.selected.min(b.entries.len().saturating_sub(1));
         ui.model.set_oled_bitmap(b.oled.iter().copied());
+        ui.model.oled_live = b.oled_live;
         if let Some(s) = b.snapshot.clone() {
             apply_snapshot(&mut ui, &s, &b.entries, true);
         }
@@ -375,7 +378,9 @@ pub fn set_connected(connected: bool) {
     });
 }
 
-pub fn preview(bitmap: &Bitmap) {
+/// Show `bitmap` in the OLED mirror. `live` = it is the frame the base station really shows (the panel is then
+/// titled "Live OLED", otherwise "OLED preview").
+pub fn preview(bitmap: &Bitmap, live: bool) {
     if bitmap.w != 128 || bitmap.h != 64 {
         return;
     }
@@ -383,12 +388,25 @@ pub fn preview(bitmap: &Bitmap) {
         for (dst, src) in b.oled.iter_mut().zip(bitmap.data.iter()) {
             *dst = src;
         }
+        b.oled_live = live;
     });
     if !modern_window::is_visible(Kind::Settings) {
         return;
     }
-    modern_window::with_ui(Kind::Settings, |ui| ui.model.set_oled_bitmap(bitmap.data.iter()));
+    modern_window::with_ui(Kind::Settings, |ui| {
+        ui.model.set_oled_bitmap(bitmap.data.iter());
+        if ui.model.oled_live != live {
+            ui.model.oled_live = live;
+            ui.invalidate(); // the panel title changes: needs a full render, not just the mirror
+        }
+    });
     modern_window::present_oled(Kind::Settings);
+}
+
+/// True while the modern settings window is on screen showing the GIF Studio page.
+pub fn gif_page_active() -> bool {
+    modern_window::is_visible(Kind::Settings)
+        && modern_window::with_ui(Kind::Settings, |ui| ui.model.page == Page::GifStudio).unwrap_or(false)
 }
 
 // ───────────────────────── events from the windows ─────────────────────────
@@ -830,13 +848,6 @@ mod tests {
 
     #[test]
     fn version_label_matches_the_package_version() {
-        let label = version_label();
-        assert!(label.starts_with('v'));
-        if env!("CARGO_PKG_VERSION").contains("-beta") {
-            assert!(label.contains(" Beta"), "{label}");
-            assert!(!label.contains('-'));
-        } else {
-            assert_eq!(label, format!("v{}", env!("CARGO_PKG_VERSION")));
-        }
+        assert_eq!(version_label(), format!("v{}", env!("CARGO_PKG_VERSION")));
     }
 }

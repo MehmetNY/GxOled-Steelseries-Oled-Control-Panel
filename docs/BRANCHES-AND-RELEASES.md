@@ -4,8 +4,10 @@
 
 | Tag | Release | Notes |
 | --- | --- | --- |
-| `v0.5.2` | GxOled Advanced v0.5.2 | Current. Original-layout Advanced UI; fixes the late hand-back after a volume-knob turn and adds *Display → Volume screen time* (1–5 s). Asset: `GxOled.Advanced.v0.5.2.exe`, `SHA256SUMS.txt`. |
-| `v0.5.1` | GxOled Advanced v0.5.1 | Previous. Known issue: GxOled returned 4–6 s after a knob turn (fixed in v0.5.2). |
+| `v0.5.3` | GxOled Advanced v0.5.3 | Current. Modern settings interface (default) with the classic window still selectable; OLED mirror shows the real screen; proportional window scaling; *Settings Summary*. Assets: `GxOled.Advanced.v0.5.3.exe`, `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md`. |
+| `v0.5.3-beta`, `v0.5.3-beta.2` | pre-releases | Trial builds of the modern interface that led to v0.5.3. Superseded; kept, not deleted. |
+| `v0.5.2` | GxOled Advanced v0.5.2 | Previous. Original-layout Advanced UI; fixes the late hand-back after a volume-knob turn and adds *Display → Volume screen time* (1–5 s). Asset: `GxOled.Advanced.v0.5.2.exe`, `SHA256SUMS.txt`. |
+| `v0.5.1` | GxOled Advanced v0.5.1 | Older. Known issue: GxOled returned 4–6 s after a knob turn (fixed in v0.5.2). |
 | `v0.5.0` | GxOled Advanced v0.5.0 | Original-layout Advanced UI. Immutable reference for the UI. |
 | `stable` | GxOled Light v0.4.0 | Older light build (`GxOled.Light.v0.4.0.exe`, `gxoled-cli.exe`). Fallback; do not touch. |
 
@@ -17,7 +19,8 @@ Published `v*` releases and `stable` are never deleted, retagged or force-pushed
 | --- | --- |
 | `main` | Source of the latest release. |
 | `release/v<version>-advanced` | One per release; pushing it builds the Windows EXE (MSVC, `--locked`), records its SHA-256 and publishes the GitHub release (`.github/workflows/release.yml`). The workflow refuses to overwrite an existing release. |
-| `release/v0.5.0-advanced`, `release/v0.5.1-advanced` | Source lines of those releases (references). |
+| `release/v0.5.0-advanced`, `release/v0.5.1-advanced`, `release/v0.5.2-advanced` | Source lines of those releases (references). |
+| `release/v0.5.3-beta`, `release/v0.5.3-beta.2` | Source of the two trial pre-releases (the beta workflow was retired with v0.5.3). |
 | `fix/media-overlay-and-version-v050` | Older fix branch, already contained in `main`. |
 | `automation/republish-exact-v0.5.0` | CI that rebuilds and replaces v0.5.0 from user-provided source. Do not re-run casually. |
 | `release/v0.5.0-studio.1`, `development/studio-2026-10-27` | Early "Studio" experiments, historical. Do not merge. |
@@ -26,7 +29,7 @@ Published `v*` releases and `stable` are never deleted, retagged or force-pushed
 
 ## How a release is made
 
-1. Change on a branch; keep the original Win32 settings layout (only add controls, never redesign).
+1. Change on a branch; keep the classic Win32 settings layout (only add controls, never redesign) — the modern interface lives in `gxoled_ui` and `modern_*.rs`.
 2. Bump `version` in the root `Cargo.toml`, the four workspace entries in `Cargo.lock` and the `GxOled Advanced vX.Y.Z` label in
    `gxoled_app/src/settings_window.rs`; add a `CHANGELOG.md` entry.
 3. Push `release/vX.Y.Z-advanced`. CI runs `cargo check`, the unit tests and the release build, then creates tag `vX.Y.Z` with the EXE

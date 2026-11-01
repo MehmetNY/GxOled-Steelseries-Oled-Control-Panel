@@ -20,7 +20,7 @@ fn model(page: Page) -> UiModel {
         profile_selected: 1,
         profile_running: Some(0),
         connected: true,
-        version: "v0.5.3 Beta".into(),
+        version: "v0.5.3".into(),
         ..UiModel::default()
     }
 }
@@ -99,9 +99,48 @@ fn hit_rects_are_finite_and_inside_the_window_width() {
     }
 }
 
+/// Resizing the window zooms the interface; nothing may move relative to anything else. The layout is computed in
+/// design units, so every control must have exactly the same rectangle at every window size, in both languages.
 #[test]
-fn action_ids_are_unique_per_page_except_mirrored_modes() {
-    let mirrored = [ids::MODE_TRAY, ids::MODE_WINDOW, ids::MODE_HYBRID];
+fn layout_is_identical_at_every_window_size() {
+    fn layout(page: Page, lang: Lang, w: u32, h: u32, dpi: f32) -> Vec<(u32, [f32; 4])> {
+        let mut ui = Ui::new();
+        ui.set_size(w, h, dpi);
+        let mut m = model(page);
+        m.lang = lang;
+        ui.model = m;
+        ui.invalidate();
+        ui.frame().expect("frame");
+        ui.hits().iter().map(|hit| (hit.id, [hit.rect.x, hit.rect.y, hit.rect.w, hit.rect.h])).collect()
+    }
+    for lang in [Lang::En, Lang::Tr] {
+        for page in Page::ALL {
+            let reference = layout(page, lang, W, H, 1.0);
+            assert!(!reference.is_empty(), "{page:?} has no controls");
+            for (w, h, dpi) in [(960, 620, 1.0), (1000, 700, 1.0), (1240, 840, 1.0), (1700, 1000, 1.0), (2175, 1461, 1.5), (3000, 1800, 2.0)] {
+                let other = layout(page, lang, w, h, dpi);
+                assert_eq!(reference.len(), other.len(), "{page:?} {lang:?} {w}x{h}: different number of controls");
+                for ((id_a, a), (id_b, b)) in reference.iter().zip(&other) {
+                    assert_eq!(id_a, id_b);
+                    for k in 0..4 {
+                        assert!((a[k] - b[k]).abs() < 0.05, "{page:?} {lang:?} {w}x{h}: control {id_a} moved: {a:?} vs {b:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn the_scale_follows_the_window_width_without_limits() {
+    assert!((Ui::scale_for(1450, 1.0) - 1.0).abs() < 1e-6);
+    assert!((Ui::scale_for(725, 1.0) - 0.5).abs() < 1e-6);
+    assert!((Ui::scale_for(2900, 2.0) - 2.0).abs() < 1e-6);
+    assert!((Ui::scale_for(4350, 1.0) - 3.0).abs() < 1e-6);
+}
+
+#[test]
+fn action_ids_are_unique_on_every_page() {
     let mut ui = Ui::new();
     ui.set_size(W, H, 1.0);
     for page in Page::ALL {
@@ -110,10 +149,7 @@ fn action_ids_are_unique_per_page_except_mirrored_modes() {
         ui.frame();
         let mut seen: Vec<u32> = Vec::new();
         for hit in ui.hits() {
-            if seen.contains(&hit.id) {
-                assert!(mirrored.contains(&hit.id), "duplicate hit id {} on {page:?}", hit.id);
-                assert!(!hit.focusable, "the mirrored copy of {} must not take a second Tab stop", hit.id);
-            }
+            assert!(!seen.contains(&hit.id), "duplicate hit id {} on {page:?}", hit.id);
             seen.push(hit.id);
         }
     }

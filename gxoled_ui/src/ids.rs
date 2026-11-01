@@ -19,7 +19,7 @@ pub const LANG_EN: u32 = 380;
 pub const LANG_TR: u32 = 381;
 pub const THEME_LIGHT: u32 = 390;
 pub const THEME_DARK: u32 = 391;
-/// Settings-window style (beta): modern or classic.
+/// Settings-window style: modern or classic.
 pub const UI_MODERN: u32 = 392;
 pub const UI_CLASSIC: u32 = 393;
 

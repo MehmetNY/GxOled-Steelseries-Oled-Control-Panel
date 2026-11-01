@@ -1,4 +1,4 @@
-//! Beta: chooses between the classic Win32 settings window and the modern one.
+//! Chooses between the classic Win32 settings window and the modern one.
 //!
 //! The classic window is always created (it owns the tray hook and is the safety net); the modern window is
 //! created lazily the first time it is opened. Every function forwards to the classic window and, when it has
@@ -102,7 +102,7 @@ pub fn set_style(new: ConfigUiStyle) {
             .set_level(rfd::MessageLevel::Info)
             .set_title("GxOled")
             .set_description(
-                "The modern (Beta) interface stopped working in this session. Restart GxOled to try it again.\n\nModern (Beta) arayüz bu oturumda çalışmayı durdurdu. Tekrar denemek için GxOled'i yeniden başlatın.",
+                "The modern interface stopped working in this session. Restart GxOled to try it again.\n\nModern arayüz bu oturumda çalışmayı durdurdu. Tekrar denemek için GxOled'i yeniden başlatın.",
             )
             .show();
         fall_back();
@@ -139,9 +139,18 @@ pub fn install_tray_hook(mode: ConfigUiMode) {
     classic::install_tray_hook(mode);
 }
 
-pub fn preview(bitmap: &Bitmap) {
+/// Show a 128x64 frame in the OLED mirror of both windows. `live`: it is what the base station is really showing.
+pub fn preview(bitmap: &Bitmap, live: bool) {
     classic::preview(bitmap);
-    guarded(|| modern_ui::preview(bitmap));
+    guarded(|| modern_ui::preview(bitmap, live));
+}
+
+/// True while the visible settings window shows its GIF Studio page.
+pub fn gif_page_active() -> bool {
+    match style() {
+        ConfigUiStyle::Classic => classic::gif_page_active(),
+        ConfigUiStyle::Modern => guarded(modern_ui::gif_page_active).unwrap_or(false),
+    }
 }
 
 pub fn set_connected(connected: bool) {
