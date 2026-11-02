@@ -45,7 +45,7 @@ jobs:
       - name: Cargo check
         run: cargo check --locked -p gxoled_app --features sdl3-static
       - name: Regression tests
-        run: cargo test --locked -p gxoled_app -p gxoled_lib -p gxoled_draw -p gxoled_ui --features gxoled_app/sdl3-static
+        run: cargo test --locked -p gxoled_app -p gxoled_lib -p gxoled_draw -p gxoled_studio -p gxoled_ui --features gxoled_app/sdl3-static
       - name: Build Windows release EXE
         run: cargo build --locked --release -p gxoled_app --features sdl3-static
       - name: Package
