@@ -871,6 +871,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gxoled_studio"
+version = "0.5.3"
+dependencies = [
+ "anyhow",
+ "gif",
+ "gxoled_lib",
+ "image",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "gxoled_ui"
 version = "0.5.3"
 dependencies = [

@@ -6,6 +6,7 @@ members = [
     "gxoled_draw",
     "gxoled_app",
     "gxoled_ui",
+    "gxoled_studio",
 ]
 
 [workspace.package]
