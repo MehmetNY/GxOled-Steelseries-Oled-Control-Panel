@@ -2798,7 +2798,7 @@ mod gif_studio_tests {
     fn the_slot_loads_the_configured_gif_once_and_hands_out_playable_frames() {
         let (mut on, mut off) = (Bitmap::new(128, 64, false), Bitmap::new(128, 64, false));
         on.data.negate();
-        off.data.clear();
+        off.data.fill(false);
         let path = temp_gif("load", &[(on, 100), (off, 250)]);
         let config = config_for(&path);
         let mut slot = StudioSlot::new();
