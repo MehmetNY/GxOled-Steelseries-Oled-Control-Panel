@@ -59,14 +59,14 @@ impl Kind {
     /// Smallest client area in logical pixels.
     fn min_client(self) -> (i32, i32) {
         match self {
-            Kind::Settings => (960, 620),
+            Kind::Settings => (800, 538),
             Kind::Editor => (760, 480),
         }
     }
     /// Preferred client area in logical pixels.
     fn default_client(self) -> (i32, i32) {
         match self {
-            Kind::Settings => (1450, 974),
+            Kind::Settings => (1015, 682),
             Kind::Editor => (930, 680),
         }
     }

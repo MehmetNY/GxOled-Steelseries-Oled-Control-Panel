@@ -16,7 +16,7 @@ use std::{
 use gxoled_lib::Bitmap;
 use gxoled_ui::{
     Ui, ids,
-    model::{Image, Lang, Page, UiEvent},
+    model::{Image, Lang, UiEvent},
 };
 
 use super::{
@@ -401,12 +401,6 @@ pub fn preview(bitmap: &Bitmap, live: bool) {
         }
     });
     modern_window::present_oled(Kind::Settings);
-}
-
-/// True while the modern settings window is on screen showing the GIF Studio page.
-pub fn gif_page_active() -> bool {
-    modern_window::is_visible(Kind::Settings)
-        && modern_window::with_ui(Kind::Settings, |ui| ui.model.page == Page::GifStudio).unwrap_or(false)
 }
 
 // ───────────────────────── events from the windows ─────────────────────────

@@ -1382,15 +1382,6 @@ pub fn preview(bitmap:&gxoled_lib::Bitmap) {
     }
 }
 
-/// True while the classic window is on screen showing the GIF Studio page.
-pub fn gif_page_active() -> bool {
-    let state = STATE.get().and_then(|state| state.lock().ok().map(|s| (s.hwnd, s.page)));
-    match state {
-        Some((hwnd, page)) => page == 6 && unsafe { IsWindowVisible(hwnd as Handle) } != 0,
-        None => false,
-    }
-}
-
 pub(super) fn open_github() {
     let url=wide("https://github.com/MehmetNY/GxOled-v0.4.0");
     let op=wide("open");

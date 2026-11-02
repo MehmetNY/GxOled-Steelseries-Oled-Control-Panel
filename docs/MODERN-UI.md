@@ -28,14 +28,14 @@ the previous modern start never painted its first frame (marker file `%APPDATA%\
 ## Behaviour worth knowing
 
 * **Resizing zooms, it does not re-flow.** The settings window is always laid out for a 1450-unit-wide design and
-  the whole picture is scaled to the window width (no lower or upper limit; the minimum window size is 960 × 620).
+  the whole picture is scaled to the window width (no lower or upper limit; the window opens at 1015 × 682 and the minimum size is 800 × 538).
   Every card, icon and caption keeps its place and proportions; a window that is too short for a page scrolls
   vertically. (`gxoled_ui::Ui::scale_for`, covered by `layout_is_identical_at_every_window_size`.)
 * **The OLED mirror shows the real screen.** The render thread hands every frame it composes (clock, GIF, media text,
   notification, OLED pixel shift, Go animation) to the window. The panel is titled *Live OLED* while those frames
-  are real. When no device frame exists (base station disconnected, or showing its own volume screen) it shows what
-  the configured clock would look like, and on the *GIF Studio* page a GIF that was picked but is not playing yet is
-  previewed — in both cases the panel is titled *OLED preview*.
+  are real, so a GIF appears when it is started and disappears when it is stopped, exactly as on the device. When no
+  device frame exists (base station disconnected, or showing its own volume screen) it shows what the configured GIF
+  or clock would look like and the panel is titled *OLED preview*.
 * **General → Settings Summary** lists the choices made on that page (opening mode, language, appearance, start with
   Windows, what happens when GxOled closes). It is read-only; the controls are the cards on the left.
 
@@ -47,7 +47,7 @@ the previous modern start never painted its first frame (marker file `%APPDATA%\
 | Win32 host: window class, input, DPI, DWM title-bar colours, native text control of the editor | `gxoled_app/src/modern_window.rs` | Windows (`windows-sys`) |
 | Bridge: control ids → `MenuEvent`, profile list/editor logic, OLED mirror, crash guard | `gxoled_app/src/modern_ui.rs` | Windows |
 | Style switch and fall-back | `gxoled_app/src/settings_ui.rs` | Windows |
-| Frame tap, shared clock composition, GIF preview | `gxoled_draw/src/lib.rs` (`DrawDevice::latest_frame`, `clock_screen`, `GifPreview`) | none |
+| Frame tap, shared clock composition, device-free GIF preview | `gxoled_draw/src/lib.rs` (`DrawDevice::latest_frame`, `clock_screen`, `GifPreview`) | none |
 | Classic window | `gxoled_app/src/settings_window.rs` | Windows |
 
 Rendering: each window is described as SVG (generated in Rust), rasterised by `resvg` with embedded Inter fonts and

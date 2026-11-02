@@ -2254,27 +2254,24 @@ fn main() {
 
         // Live OLED mirror of the settings window. In order of preference:
         //  1. the frame of a running Go animation;
-        //  2. the GIF that was picked on the GIF Studio page while it is not playing yet (a preview, not live);
-        //  3. the frame the render thread is really sending to the base station (live);
-        //  4. without a device frame (not connected, or the base station shows its own volume screen): what the
-        //     configured clock / GIF would look like (a preview).
+        //  2. the frame the render thread is really sending to the base station (live) - a GIF therefore appears
+        //     when it is started and disappears when it is stopped, like on the device;
+        //  3. without a device frame (not connected, or the base station shows its own volume screen): what the
+        //     configured GIF / clock would look like (a preview).
         #[cfg(target_os = "windows")]
         if last_preview_tick.elapsed() >= Duration::from_millis(40) || force_redraw {
             last_preview_tick = Instant::now();
             let (screen_w, screen_h) = dev.dimensions();
             let gif_path = config.animation_path.clone();
-            let gif_picked_only = !config.animation_playing && gif_path.is_some() && settings_ui::gif_page_active();
-            let gif_wanted = gif_picked_only || (config.animation_playing && gif_path.is_some());
+            let gif_wanted = config.animation_playing && gif_path.is_some();
             if !gif_wanted || preview_gif.as_ref().is_some_and(|(p, _)| Some(p) != gif_path.as_ref()) {
                 preview_gif = None; // drop the decoded frames once they are not needed (or the file changed)
             }
             let (frame, live): (Bitmap, bool) = if let Some(frame) = &go_frame {
                 ((**frame).clone(), oled_available)
-            } else if let (true, Some(path)) = (gif_picked_only, &gif_path) {
-                (gif_preview_screen(&mut preview_gif, path, screen_w, screen_h), false)
             } else if let Some(frame) = dev.latest_frame(Duration::from_millis(1500)) {
                 (frame, true)
-            } else if let (true, Some(path)) = (config.animation_playing, &gif_path) {
+            } else if let (true, Some(path)) = (gif_wanted, &gif_path) {
                 (gif_preview_screen(&mut preview_gif, path, screen_w, screen_h), false)
             } else if config.time_mode != ConfigTimeMode::Off && config.go_animation.is_none() {
                 let clock = dev.clock_screen(

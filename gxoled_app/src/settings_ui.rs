@@ -145,14 +145,6 @@ pub fn preview(bitmap: &Bitmap, live: bool) {
     guarded(|| modern_ui::preview(bitmap, live));
 }
 
-/// True while the visible settings window shows its GIF Studio page.
-pub fn gif_page_active() -> bool {
-    match style() {
-        ConfigUiStyle::Classic => classic::gif_page_active(),
-        ConfigUiStyle::Modern => guarded(modern_ui::gif_page_active).unwrap_or(false),
-    }
-}
-
 pub fn set_connected(connected: bool) {
     guarded(|| modern_ui::set_connected(connected));
 }
