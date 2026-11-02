@@ -13,6 +13,7 @@ pub mod ids;
 pub mod model;
 pub mod pages;
 pub mod scene;
+pub mod studio_bind;
 pub mod theme;
 
 use std::time::{Duration, Instant};
@@ -54,9 +55,10 @@ pub struct Frame<'a> {
 
 #[derive(Clone, Copy)]
 struct SliderDrag {
+    id: u32,
     track: Rect,
-    min: u8,
-    max: u8,
+    min: i32,
+    max: i32,
 }
 
 pub struct Ui {
@@ -272,11 +274,20 @@ impl Ui {
             let clip_top = if ov.scrolls { viewport_top.ceil() as i32 } else { 0 };
             let radius = ov.radius * scale;
             match ov.kind {
-                OverlayKind::Oled => blit_oled(&mut self.frame, bw, bh, dst, clip_top, radius, &self.model.oled),
+                OverlayKind::Oled => blit_mono(&mut self.frame, bw, bh, dst, clip_top, radius, &self.model.oled, OLED_W, OLED_H),
                 OverlayKind::Qr => {
                     if let Some(img) = &self.model.qr {
                         blit_image(&mut self.frame, bw, bh, dst, clip_top, img);
                     }
+                }
+                OverlayKind::StudioSource => {
+                    if let Some(img) = &self.model.studio.source {
+                        blit_image_fit(&mut self.frame, bw, bh, dst, clip_top, radius, img);
+                    }
+                }
+                OverlayKind::StudioMono => {
+                    let st = &self.model.studio;
+                    blit_mono(&mut self.frame, bw, bh, dst, clip_top, radius, &st.mono, st.mono_w, st.mono_h);
                 }
             }
         }
@@ -319,6 +330,19 @@ impl Ui {
         let y = if ov.scrolls { ov.rect.y - self.scroll } else { ov.rect.y };
         let s = self.scale;
         Some(((ov.rect.x * s) as i32, (y * s) as i32, (ov.rect.w * s).ceil() as i32 + 1, (ov.rect.h * s).ceil() as i32 + 1))
+    }
+
+    /// Pixel rectangles of every live raster region (OLED mirror, GIF Studio previews), for partial invalidation.
+    pub fn live_rects_px(&self) -> Vec<(i32, i32, i32, i32)> {
+        let s = self.scale;
+        self.overlays
+            .iter()
+            .filter(|o| matches!(o.kind, OverlayKind::Oled | OverlayKind::StudioSource | OverlayKind::StudioMono))
+            .map(|ov| {
+                let y = if ov.scrolls { ov.rect.y - self.scroll } else { ov.rect.y };
+                ((ov.rect.x * s) as i32, (y * s) as i32, (ov.rect.w * s).ceil() as i32 + 1, (ov.rect.h * s).ceil() as i32 + 1)
+            })
+            .collect()
     }
 
     /// Pixels per design unit of the last rendered frame.
@@ -397,7 +421,7 @@ impl Ui {
             self.focus = Some(hit.id);
         }
         if let HitKind::Slider { track, min, max } = hit.kind {
-            let drag = SliderDrag { track, min, max };
+            let drag = SliderDrag { id: hit.id, track, min, max };
             self.drag = Some(drag);
             self.slide_to(drag, x);
         }
@@ -460,11 +484,34 @@ impl Ui {
     fn slide_to(&mut self, drag: SliderDrag, x_du: f32) {
         let frac = ((x_du - drag.track.x) / drag.track.w).clamp(0.0, 1.0);
         let span = (drag.max - drag.min) as f32;
-        let value = drag.min + (frac * span).round() as u8;
-        if self.model.brightness != Some(value) {
-            self.model.brightness = Some(value);
-            self.events.push(UiEvent::Brightness(value));
-            self.dirty = true;
+        let value = drag.min + (frac * span).round() as i32;
+        self.set_slider(drag.id, value);
+    }
+
+    /// Moves a slider to `value` (already inside its range) and reports it.
+    fn set_slider(&mut self, id: u32, value: i32) {
+        if id == ids::BRIGHTNESS {
+            let value = value.clamp(1, 10) as u8;
+            if self.model.brightness != Some(value) {
+                self.model.brightness = Some(value);
+                self.events.push(UiEvent::Brightness(value));
+                self.dirty = true;
+            }
+        } else if let Some(s) = self.model.studio.sliders.iter_mut().find(|s| s.id == id) {
+            let value = value.clamp(s.min, s.max.max(s.min));
+            if s.value != value {
+                s.value = value;
+                self.events.push(UiEvent::Slider(id, value));
+                self.dirty = true;
+            }
+        }
+    }
+
+    fn slider_value(&self, id: u32, min: i32, max: i32) -> i32 {
+        if id == ids::BRIGHTNESS {
+            self.model.brightness.map(i32::from).unwrap_or((min + max) / 2)
+        } else {
+            self.model.studio.slider(id).map(|s| s.value).unwrap_or((min + max) / 2)
         }
     }
 
@@ -525,15 +572,14 @@ impl Ui {
         self.dirty = true;
         match kind {
             HitKind::Slider { min, max, .. } => {
-                let cur = self.model.brightness.unwrap_or((min + max) / 2);
+                let cur = self.slider_value(id, min, max);
+                // Wide ranges (percent values) move faster than the ten brightness steps.
+                let step = if max - min > 100 { (max - min) / 100 } else { 1 };
                 let next = match key {
-                    Key::Left | Key::Down => cur.saturating_sub(1).max(min),
-                    _ => (cur + 1).min(max),
+                    Key::Left | Key::Down => (cur - step).max(min),
+                    _ => (cur + step).min(max),
                 };
-                if self.model.brightness != Some(next) {
-                    self.model.brightness = Some(next);
-                    self.events.push(UiEvent::Brightness(next));
-                }
+                self.set_slider(id, next);
             }
             HitKind::ListRow => {
                 let n = self.model.profiles.len();
@@ -623,17 +669,50 @@ fn put(frame: &mut [u8], bw: i32, bh: i32, x: i32, y: i32, rgb: [u8; 3]) {
     frame[i + 3] = 255;
 }
 
-fn blit_oled(frame: &mut [u8], bw: i32, bh: i32, dst: (i32, i32, i32, i32), clip_top: i32, radius: f32, oled: &[bool]) {
+/// Nearest-neighbour blit of a 1-bit picture (`pw` × `ph`) so the pixel art stays crisp.
+#[allow(clippy::too_many_arguments)]
+fn blit_mono(frame: &mut [u8], bw: i32, bh: i32, dst: (i32, i32, i32, i32), clip_top: i32, radius: f32, pixels: &[bool], pw: usize, ph: usize) {
     let (dx, dy, dw, dh) = dst;
+    if pw == 0 || ph == 0 {
+        return;
+    }
     for y in 0..dh {
-        let sy = ((y as i64 * OLED_H as i64) / dh as i64) as usize;
+        let sy = ((y as i64 * ph as i64) / dh as i64) as usize;
         for x in 0..dw {
             if !inside_round(x as f32 + 0.5, y as f32 + 0.5, dw as f32, dh as f32, radius) || dy + y < clip_top {
                 continue;
             }
-            let sx = ((x as i64 * OLED_W as i64) / dw as i64) as usize;
-            let on = oled.get(sy * OLED_W + sx).copied().unwrap_or(false);
+            let sx = ((x as i64 * pw as i64) / dw as i64) as usize;
+            let on = pixels.get(sy * pw + sx).copied().unwrap_or(false);
             put(frame, bw, bh, dx + x, dy + y, if on { [255, 255, 255] } else { [0, 0, 0] });
+        }
+    }
+}
+
+/// Draws `img` inside `dst` keeping its aspect ratio (centred, letter-boxed with the OLED black), alpha over black.
+fn blit_image_fit(frame: &mut [u8], bw: i32, bh: i32, dst: (i32, i32, i32, i32), clip_top: i32, radius: f32, img: &model::Image) {
+    let (dx, dy, dw, dh) = dst;
+    if img.w == 0 || img.h == 0 || img.rgba.len() < (img.w * img.h * 4) as usize {
+        return;
+    }
+    let k = (dw as f32 / img.w as f32).min(dh as f32 / img.h as f32);
+    let (iw, ih) = (((img.w as f32 * k).round() as i32).max(1), ((img.h as f32 * k).round() as i32).max(1));
+    let (ox, oy) = ((dw - iw) / 2, (dh - ih) / 2);
+    for y in 0..dh {
+        for x in 0..dw {
+            if !inside_round(x as f32 + 0.5, y as f32 + 0.5, dw as f32, dh as f32, radius) || dy + y < clip_top {
+                continue;
+            }
+            let rgb = if x >= ox && x < ox + iw && y >= oy && y < oy + ih {
+                let sx = (((x - ox) as i64 * img.w as i64) / iw as i64) as u32;
+                let sy = (((y - oy) as i64 * img.h as i64) / ih as i64) as u32;
+                let i = ((sy * img.w + sx) * 4) as usize;
+                let a = img.rgba[i + 3] as u32;
+                [(img.rgba[i] as u32 * a / 255) as u8, (img.rgba[i + 1] as u32 * a / 255) as u8, (img.rgba[i + 2] as u32 * a / 255) as u8]
+            } else {
+                [0, 0, 0]
+            };
+            put(frame, bw, bh, dx + x, dy + y, rgb);
         }
     }
 }

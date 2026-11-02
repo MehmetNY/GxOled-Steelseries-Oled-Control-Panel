@@ -256,6 +256,8 @@ pub enum DrawLayer {
         x: isize,
         y: isize,
         follow_fps: bool,
+        /// `false` = play once and hold the last frame.
+        repeat: bool,
     },
     Scroll {
         bitmap: Arc<Bitmap>,
@@ -303,7 +305,7 @@ fn animation_frame_delay(frame: &Frame) -> Duration {
 /// Initialize the first frame's display duration, then advance at most one frame per render
 /// cycle. Scheduling relative to the current render time prevents delayed frames from causing a
 /// burst of rapid catch-up frames, which the OLED cannot display usefully at its fixed refresh rate.
-fn update_animation_timing(state: &mut AnimState, frames: &[Frame], now: Instant) {
+fn update_animation_timing(state: &mut AnimState, frames: &[Frame], now: Instant, repeat: bool) {
     if frames.is_empty() {
         return;
     }
@@ -315,6 +317,12 @@ fn update_animation_timing(state: &mut AnimState, frames: &[Frame], now: Instant
     }
 
     if now >= state.next_update {
+        if !repeat && state.ticks + 1 >= frames.len() {
+            // Played once: the last frame stays on screen.
+            state.ticks = frames.len() - 1;
+            state.next_update = now + Duration::from_secs(3600);
+            return;
+        }
         state.ticks = (state.ticks + 1) % frames.len();
         state.next_update = now + animation_frame_delay(&frames[state.ticks]);
     }
@@ -556,14 +564,17 @@ fn run_draw_device_thread(
                         x,
                         y,
                         follow_fps,
+                        repeat,
                     } => {
                         if !frames.is_empty() {
                             if *follow_fps {
                                 let frame = &frames[state.anim.ticks % frames.len()];
                                 screen.blit(&frame.bitmap, x + shift_x, y + shift_y, false);
-                                state.anim.ticks = (state.anim.ticks + 1) % frames.len();
+                                if *repeat || state.anim.ticks + 1 < frames.len() {
+                                    state.anim.ticks = (state.anim.ticks + 1) % frames.len();
+                                }
                             } else {
-                                update_animation_timing(&mut state.anim, frames, time);
+                                update_animation_timing(&mut state.anim, frames, time, *repeat);
                                 let frame = &frames[state.anim.ticks % frames.len()];
                                 screen.blit(&frame.bitmap, x + shift_x, y + shift_y, false);
                             }
@@ -1151,12 +1162,12 @@ mod animation_timing_tests {
             timing_initialized: false,
         };
 
-        update_animation_timing(&mut state, &frames, start);
+        update_animation_timing(&mut state, &frames, start, true);
         assert_eq!(state.ticks, 0, "the first frame must not be skipped immediately");
         assert_eq!(state.next_update, start + Duration::from_millis(100));
 
         let first_deadline = state.next_update;
-        update_animation_timing(&mut state, &frames, first_deadline);
+        update_animation_timing(&mut state, &frames, first_deadline, true);
         assert_eq!(state.ticks, 1);
         assert_eq!(state.next_update, first_deadline + Duration::from_millis(250));
     }
@@ -1321,5 +1332,55 @@ mod preview_tests {
         assert_eq!(bounds(&second), Some((54, 28, 73, 35)), "second frame after its predecessor's delay");
         assert_eq!(bounds(&gif.screen(t0 + Duration::from_millis(349), 128, 64)), Some((54, 28, 73, 35)));
         assert_eq!(bounds(&gif.screen(t0 + Duration::from_millis(350), 128, 64)), Some((59, 29, 68, 34)), "wraps around");
+    }
+}
+
+#[cfg(test)]
+mod animation_tests {
+    use super::*;
+
+    fn frames(n: usize) -> Vec<Frame> {
+        (0..n).map(|_| Frame { bitmap: Arc::new(Bitmap::new(2, 2, false)), delay: Some(Duration::from_millis(100)) }).collect()
+    }
+
+    fn state(now: Instant) -> AnimState {
+        AnimState { ticks: 0, next_update: now, timing_initialized: false }
+    }
+
+    #[test]
+    fn a_repeating_animation_wraps_around() {
+        let f = frames(3);
+        let t0 = Instant::now();
+        let mut s = state(t0);
+        update_animation_timing(&mut s, &f, t0, true);
+        let mut seen = vec![s.ticks];
+        for i in 1..=4u64 {
+            update_animation_timing(&mut s, &f, t0 + Duration::from_millis(100 * i + 1), true);
+            seen.push(s.ticks);
+        }
+        assert_eq!(seen, [0, 1, 2, 0, 1]);
+    }
+
+    #[test]
+    fn a_play_once_animation_holds_its_last_frame() {
+        let f = frames(3);
+        let t0 = Instant::now();
+        let mut s = state(t0);
+        update_animation_timing(&mut s, &f, t0, false);
+        for i in 1..=10u64 {
+            update_animation_timing(&mut s, &f, t0 + Duration::from_millis(100 * i + 1), false);
+        }
+        assert_eq!(s.ticks, 2, "stays on the last frame");
+        // Even a long time later it does not wrap.
+        update_animation_timing(&mut s, &f, t0 + Duration::from_secs(600), false);
+        assert_eq!(s.ticks, 2);
+    }
+
+    #[test]
+    fn an_empty_animation_is_ignored() {
+        let t0 = Instant::now();
+        let mut s = state(t0);
+        update_animation_timing(&mut s, &[], t0, false);
+        assert_eq!(s.ticks, 0);
     }
 }

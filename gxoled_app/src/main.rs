@@ -14,7 +14,7 @@ mod settings_ui;
 mod go_bridge;
 
 use chrono::{DateTime, Local, TimeDelta, Timelike};
-use gxoled_draw::{ClockStyle as DrawClockStyle, DrawDevice, DrawEvent, DrawLayer, LayerId, ShiftMode, TextRenderer, bitmap_from_memory, try_decode_gif_frames};
+use gxoled_draw::{ClockStyle as DrawClockStyle, DrawDevice, DrawEvent, DrawLayer, LayerId, ShiftMode, TextRenderer, bitmap_from_memory};
 use gxoled_lib::{Bitmap, Device};
 use os::{Media, OSFeatures, OSImpl};
 use rfd::{MessageDialog, MessageLevel};
@@ -212,6 +212,8 @@ struct Config {
     // Remember the last selected animation and whether it was playing.
     animation_path: Option<PathBuf>,
     animation_playing: bool,
+    // How the GIF is placed, toned and dithered (GIF Studio).
+    animation_settings: gxoled_studio::Settings,
     // How long the base station's own volume screen stays up after the knob stops (ms; one of
     // `VOLUME_OSD_HOLD_CHOICES_MS`).
     volume_osd_hold_ms: u32,
@@ -242,6 +244,7 @@ impl Default for Config {
             startup: false,
             animation_path: None,
             animation_playing: false,
+            animation_settings: gxoled_studio::Settings::default(),
             volume_osd_hold_ms: DEFAULT_VOLUME_OSD_HOLD_MS,
         }
     }
@@ -278,6 +281,7 @@ impl Config {
             conf.screen_brightness = None;
         }
         conf.volume_osd_hold_ms = normalize_volume_osd_hold_ms(conf.volume_osd_hold_ms);
+        conf.animation_settings = conf.animation_settings.clamped();
         // Old versions stored ClockAndMedia. Migrate that broken layout to the
         // exclusive media screen while keeping the legacy enum variant readable.
         conf.media_mode = MediaMode::MediaOnly;
@@ -643,17 +647,226 @@ struct ClockPosition {
     rect: ClockRect,
 }
 
-/// Decode `path` for the OLED preview (once per file; `None` inside the slot = it could not be decoded) and return the
-/// frame to show now, centred on a blank screen.
+/// The OLED's size; the studio renders for this until a device reports another one.
+const SCREEN_DIMS: (usize, usize) = (128, 64);
+
+/// Every frame of the animation that plays, ready for the draw thread.
+fn studio_frames(studio: &mut gxoled_studio::Studio) -> Vec<gxoled_draw::Frame> {
+    studio
+        .render_all()
+        .into_iter()
+        .map(|(bitmap, ms)| gxoled_draw::Frame { bitmap, delay: Some(Duration::from_millis(ms as u64)) })
+        .collect()
+}
+
+/// The GIF being edited / played. It is decoded on demand and dropped again after a while, so a GIF that is
+/// neither playing nor open in the editor does not keep its decoded frames in memory.
+struct StudioSlot {
+    studio: Option<gxoled_studio::Studio>,
+    /// A file that failed to load; not retried until the configured path changes.
+    failed: Option<PathBuf>,
+    last_used: Instant,
+}
+
+impl StudioSlot {
+    const IDLE_RELEASE: Duration = Duration::from_secs(30);
+
+    fn new() -> Self {
+        Self { studio: None, failed: None, last_used: Instant::now() }
+    }
+
+    /// The studio for the configured GIF, loading it if needed. `None` when no GIF is configured or it cannot be read.
+    fn get(&mut self, config: &Config, dims: (usize, usize)) -> Option<&mut gxoled_studio::Studio> {
+        self.last_used = Instant::now();
+        let Some(want) = config.animation_path.as_deref() else {
+            self.studio = None;
+            return None;
+        };
+        if self.studio.as_ref().is_some_and(|s| s.path() == want) {
+            let studio = self.studio.as_mut()?;
+            studio.set_target(dims);
+            return Some(studio);
+        }
+        self.studio = None;
+        if self.failed.as_deref() == Some(want) {
+            return None;
+        }
+        match gxoled_studio::Studio::open(want.to_owned(), config.animation_settings, dims) {
+            Ok(studio) => {
+                self.studio = Some(studio);
+                self.studio.as_mut()
+            }
+            Err(error) => {
+                eprintln!("GxOled GIF Studio could not open {}: {error}", want.display());
+                self.failed = Some(want.to_owned());
+                None
+            }
+        }
+    }
+
+    fn set(&mut self, studio: gxoled_studio::Studio) {
+        self.failed = None;
+        self.last_used = Instant::now();
+        self.studio = Some(studio);
+    }
+
+    fn release_if_idle(&mut self) {
+        if self.studio.is_some() && self.last_used.elapsed() >= Self::IDLE_RELEASE {
+            self.studio = None;
+        }
+    }
+}
+
+/// English or Turkish text, following the configured language.
+#[cfg(target_os = "windows")]
+fn say<'a>(config: &Config, en: &'a str, tr: &'a str) -> &'a str {
+    if config.language == ConfigLanguage::Turkish { tr } else { en }
+}
+
+/// State of the GIF Studio page in the modern settings window (what has to be pushed into it).
+#[cfg(target_os = "windows")]
+struct StudioUi {
+    dirty: bool,
+    status: Option<(String, bool)>,
+    was_visible: bool,
+    started: Instant,
+    last_pushed: Option<(usize, u64)>,
+    /// Bumped on every settings change so the preview is redrawn even if the frame index stays the same.
+    generation: u64,
+}
+
+#[cfg(target_os = "windows")]
+impl StudioUi {
+    fn new() -> Self {
+        Self { dirty: true, status: None, was_visible: false, started: Instant::now(), last_pushed: None, generation: 0 }
+    }
+
+    fn changed(&mut self) {
+        self.dirty = true;
+        self.generation += 1;
+        self.status = None;
+    }
+
+    fn say(&mut self, text: String, ok: bool) {
+        self.status = Some((text, ok));
+        self.dirty = true;
+    }
+}
+
+/// Keeps the GIF Studio page current: pushes its controls when they changed and animates the two previews.
+#[cfg(target_os = "windows")]
+fn studio_ui_tick(st: &mut StudioUi, slot: &mut StudioSlot, config: &Config, dims: (usize, usize)) {
+    if !settings_ui::studio_page_visible() {
+        st.was_visible = false;
+        return;
+    }
+    if !st.was_visible {
+        st.was_visible = true;
+        st.dirty = true;
+        st.started = Instant::now();
+        st.last_pushed = None;
+    }
+    let lang = if config.language == ConfigLanguage::Turkish { gxoled_ui::model::Lang::Tr } else { gxoled_ui::model::Lang::En };
+    let status = st.status.clone();
+    let status = status.as_ref().map(|(t, ok)| (t.as_str(), *ok));
+    let Some(studio) = slot.get(config, dims) else {
+        if st.dirty {
+            let model = gxoled_ui::model::StudioModel {
+                status: status.map(|(t, _)| t.to_owned()).unwrap_or_default(),
+                status_ok: status.is_none_or(|(_, ok)| ok),
+                ..Default::default()
+            };
+            settings_ui::set_studio_state(model);
+            st.dirty = false;
+        }
+        return;
+    };
+    if st.dirty {
+        settings_ui::set_studio_state(gxoled_ui::studio_bind::model(studio, lang, status));
+        st.dirty = false;
+        st.last_pushed = None;
+    }
+    let plan = studio.plan();
+    let total: u64 = plan.iter().map(|s| s.delay_ms as u64).sum();
+    let mut elapsed = st.started.elapsed().as_millis() as u64;
+    if !studio.settings().looping && elapsed >= total + 1000 {
+        st.started = Instant::now(); // a play-once GIF replays in the preview after a short hold
+        elapsed = 0;
+    }
+    let Some(step) = gxoled_studio::Studio::step_at(&plan, elapsed, studio.settings().looping) else { return };
+    let index = plan[step].index;
+    if st.last_pushed == Some((index, st.generation)) {
+        return;
+    }
+    st.last_pushed = Some((index, st.generation));
+    if let Some(mono) = studio.frame(index) {
+        let thumb = studio
+            .source()
+            .thumbnail(index, 256, 128)
+            .map(|(w, h, rgba)| gxoled_ui::model::Image { w, h, rgba });
+        settings_ui::set_studio_preview(thumb, &mono);
+    }
+}
+
+#[cfg(target_os = "windows")]
+enum ProjectDialog {
+    Open,
+    Save,
+    Export,
+}
+
+/// Open / save dialogs run on their own thread (like the GIF picker) and report back with a `MenuEvent`.
+#[cfg(target_os = "windows")]
+fn start_project_dialog(tx: &mpsc::Sender<MenuEvent>, kind: ProjectDialog, default_name: String, title: String) {
+    let tx = tx.clone();
+    let _ = std::thread::Builder::new().name("gxoled-studio-dialog".to_owned()).spawn(move || {
+        let dialog = rfd::FileDialog::new().set_title(&title);
+        let event = match kind {
+            ProjectDialog::Open => dialog
+                .add_filter("GxOled GIF project", &["json"])
+                .pick_file()
+                .map(MenuEvent::StudioProjectChosen),
+            ProjectDialog::Save => dialog
+                .add_filter("GxOled GIF project", &["json"])
+                .set_file_name(&default_name)
+                .save_file()
+                .map(|p| MenuEvent::StudioSaveTo(with_suffix(p, "json", ".gxgif.json"))),
+            ProjectDialog::Export => dialog
+                .add_filter("GIF animation", &["gif"])
+                .set_file_name(&default_name)
+                .save_file()
+                .map(|p| MenuEvent::StudioExportTo(with_suffix(p, "gif", ".gif"))),
+        };
+        if let Some(event) = event {
+            let _ = tx.send(event);
+        }
+    });
+}
+
+/// `path` with `suffix` appended when it does not already carry the extension `ext`.
+#[cfg(target_os = "windows")]
+fn with_suffix(path: PathBuf, ext: &str, suffix: &str) -> PathBuf {
+    if path.extension().is_some_and(|e| e.eq_ignore_ascii_case(ext)) {
+        return path;
+    }
+    let mut name = path.into_os_string();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// Preview of the configured GIF while no device frame exists: it plays from the studio's frames, centred on a
+/// blank screen.
 #[cfg(target_os = "windows")]
 fn gif_preview_screen(
     slot: &mut Option<(PathBuf, Option<gxoled_draw::GifPreview>)>,
-    path: &std::path::Path,
+    studio: &mut StudioSlot,
+    config: &Config,
     width: usize,
     height: usize,
 ) -> Bitmap {
+    let Some(path) = config.animation_path.as_deref() else { return Bitmap::new(width, height, false) };
     if slot.as_ref().is_none_or(|(loaded, _)| loaded != path) {
-        let frames = try_decode_gif_frames(&path.to_string_lossy(), 0x80).ok();
+        let frames = studio.get(config, (width, height)).map(studio_frames);
         *slot = Some((path.to_owned(), frames.and_then(gxoled_draw::GifPreview::new)));
     }
     match slot.as_mut().and_then(|(_, gif)| gif.as_mut()) {
@@ -954,6 +1167,19 @@ enum MenuEvent {
     OpenGifPickerFromWindow,
     #[cfg(target_os = "windows")]
     ToggleGifFromWindow,
+    /// GIF Studio slider moved (`ids::STUDIO_SLIDER_BASE + index`, value).
+    #[cfg(target_os = "windows")]
+    StudioSlider(u32, i32),
+    /// GIF Studio chip, toggle or button (`gxoled_ui::ids::is_studio_action`).
+    #[cfg(target_os = "windows")]
+    StudioAction(u32),
+    /// File chosen in the "Open project" dialog / the two save dialogs.
+    #[cfg(target_os = "windows")]
+    StudioProjectChosen(PathBuf),
+    #[cfg(target_os = "windows")]
+    StudioSaveTo(PathBuf),
+    #[cfg(target_os = "windows")]
+    StudioExportTo(PathBuf),
     SetShiftMode(ConfigShiftMode),
     SetStatusNotifyMode(StatusNotifyMode),
     SetQuitMode(ConfigQuitMode),
@@ -1138,9 +1364,9 @@ fn main() {
     // Retain the GIF path but load frames only when playback is active. A stopped
     // animation must not hold thousands of decoded frames in RAM.
     if config.go_animation.is_some() { config.animation_playing = false; }
+    let mut studio_slot = StudioSlot::new();
     let mut animation_frames: Option<Vec<gxoled_draw::Frame>> = if config.animation_playing {
-        config.animation_path.as_ref().and_then(|path|
-            try_decode_gif_frames(&path.to_string_lossy(), 0x80).ok())
+        studio_slot.get(&config, SCREEN_DIMS).map(studio_frames)
     } else { None };
     if animation_frames.is_none() && config.animation_playing {
         config.animation_playing = false;
@@ -1504,6 +1730,13 @@ fn main() {
     let mut last_preview: Option<(Bitmap, bool)> = None;
     #[cfg(target_os = "windows")]
     let mut preview_gif: Option<(PathBuf, Option<gxoled_draw::GifPreview>)> = None;
+    // GIF Studio editor (modern settings window): page state, throttled re-render of a playing GIF, and the
+    // settings of a project that is being opened (applied by the `GifSelected` it triggers).
+    #[cfg(target_os = "windows")]
+    let mut studio_ui = StudioUi::new();
+    #[cfg(target_os = "windows")]
+    let mut studio_apply_due: Option<Instant> = None;
+    let mut pending_project_settings: Option<gxoled_studio::Settings> = None;
     let mut last_clock_shift_minute: Option<i64> = None;
     let mut clock_offset: (isize, isize) = (0, 0);
     let mut last_clock_rect: Option<ClockRect> = None;
@@ -1623,6 +1856,7 @@ fn main() {
                 x,
                 y,
                 follow_fps: false,
+                repeat: config.animation_settings.looping,
             }));
         } else {
             config.animation_playing = false;
@@ -1714,6 +1948,114 @@ fn main() {
                     let enabled=unsafe{sdl::SDL_GetTrayEntryChecked(tm_animation_check)};
                     unsafe{sdl::SDL_SetTrayEntryChecked(tm_animation_check,!enabled);}
                     let _=menu_tx.send(MenuEvent::ToggleAnimation);
+                }
+                #[cfg(target_os = "windows")]
+                MenuEvent::StudioSlider(id, value) => {
+                    if let Some(studio) = studio_slot.get(&config, dev.dimensions()) {
+                        let frames = studio.frame_count();
+                        studio.update(|s| {
+                            gxoled_ui::studio_bind::apply_slider(s, id, value, frames);
+                        });
+                        config.animation_settings = *studio.settings();
+                        studio_ui.changed();
+                        // While a slider is dragged the playing GIF is re-rendered a few times per second, not per
+                        // mouse move; long GIFs take longer to render, so they are refreshed less often.
+                        studio_apply_due.get_or_insert(Instant::now() + Duration::from_millis(150 + 3 * frames as u64));
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                MenuEvent::StudioAction(id) => {
+                    use gxoled_ui::ids as ui_ids;
+                    let name_stem = config
+                        .animation_path
+                        .as_ref()
+                        .and_then(|p| p.file_stem())
+                        .map(|s| s.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| "animation".to_owned());
+                    let has_gif = studio_slot.get(&config, dev.dimensions()).is_some();
+                    match id {
+                        ui_ids::STUDIO_OPEN => start_project_dialog(
+                            &menu_tx,
+                            ProjectDialog::Open,
+                            String::new(),
+                            say(&config, "Open GIF project", "GIF projesini aç").to_owned(),
+                        ),
+                        ui_ids::STUDIO_SAVE | ui_ids::STUDIO_EXPORT if !has_gif => {
+                            studio_ui.say(say(&config, "Add a GIF first.", "Önce bir GIF ekleyin.").to_owned(), false);
+                        }
+                        ui_ids::STUDIO_SAVE => start_project_dialog(
+                            &menu_tx,
+                            ProjectDialog::Save,
+                            format!("{name_stem}.gxgif.json"),
+                            say(&config, "Save GIF project", "GIF projesini kaydet").to_owned(),
+                        ),
+                        ui_ids::STUDIO_EXPORT => start_project_dialog(
+                            &menu_tx,
+                            ProjectDialog::Export,
+                            format!("{name_stem}-oled.gif"),
+                            say(&config, "Export as GIF", "GIF olarak dışa aktar").to_owned(),
+                        ),
+                        _ => {
+                            if let Some(studio) = studio_slot.get(&config, dev.dimensions()) {
+                                if id == ui_ids::STUDIO_RESET {
+                                    studio.replace_settings(gxoled_studio::Settings::default());
+                                } else {
+                                    let mut next = *studio.settings();
+                                    if gxoled_ui::studio_bind::apply_action(&mut next, id) {
+                                        studio.replace_settings(next);
+                                    }
+                                }
+                                config.animation_settings = *studio.settings();
+                                studio_ui.changed();
+                                studio_apply_due = Some(Instant::now());
+                            }
+                        }
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                MenuEvent::StudioProjectChosen(path) => {
+                    let opened = std::fs::metadata(&path)
+                        .map_err(|e| e.to_string())
+                        .and_then(|m| if m.len() > 1_000_000 { Err("file is too large for a project".to_owned()) } else { Ok(()) })
+                        .and_then(|_| std::fs::read_to_string(&path).map_err(|e| e.to_string()))
+                        .and_then(|json| gxoled_studio::Project::from_json(&json).map_err(|e| e.to_string()));
+                    match opened {
+                        Ok(project) => {
+                            // GifSelected loads the GIF and applies the project's settings.
+                            pending_project_settings = Some(project.settings);
+                            let _ = menu_tx.send(MenuEvent::GifSelected(project.source));
+                        }
+                        Err(error) => studio_ui.say(
+                            format!("{} {error}", say(&config, "Could not open the project:", "Proje açılamadı:")),
+                            false,
+                        ),
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                MenuEvent::StudioSaveTo(path) => {
+                    let result = studio_slot
+                        .get(&config, dev.dimensions())
+                        .ok_or_else(|| "no GIF".to_owned())
+                        .and_then(|s| s.project().to_json().map_err(|e| e.to_string()))
+                        .and_then(|json| std::fs::write(&path, json).map_err(|e| e.to_string()));
+                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    match result {
+                        Ok(()) => studio_ui.say(format!("{} {name}", say(&config, "Project saved:", "Proje kaydedildi:")), true),
+                        Err(error) => studio_ui.say(format!("{} {error}", say(&config, "Could not save:", "Kaydedilemedi:")), false),
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                MenuEvent::StudioExportTo(path) => {
+                    let result = studio_slot
+                        .get(&config, dev.dimensions())
+                        .ok_or_else(|| "no GIF".to_owned())
+                        .and_then(|s| s.export_gif().map_err(|e| e.to_string()))
+                        .and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string()));
+                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    match result {
+                        Ok(()) => studio_ui.say(format!("{} {name}", say(&config, "Exported:", "Dışa aktarıldı:")), true),
+                        Err(error) => studio_ui.say(format!("{} {error}", say(&config, "Could not export:", "Dışa aktarılamadı:")), false),
+                    }
                 }
                 #[cfg(target_os = "windows")]
                 MenuEvent::ToggleStartupFromWindow => {
@@ -1851,16 +2193,22 @@ fn main() {
                     }
                 }
                 MenuEvent::GifSelected(path) => {
-                    let path_string = path.to_string_lossy().into_owned();
-                    let decoded = try_decode_gif_frames(&path_string, 0x80);
-                    match decoded {
-                        Ok(frames) if !frames.is_empty() => {
+                    // A project brings its own settings; a plain GIF keeps the current ones (trim is per GIF).
+                    let settings = pending_project_settings.take().unwrap_or_else(|| {
+                        let mut s = config.animation_settings;
+                        s.trim_start = 0;
+                        s.trim_end = None;
+                        s
+                    });
+                    match gxoled_studio::Studio::open(path.clone(), settings, dev.dimensions()) {
+                        Ok(studio) => {
                             // Replacing the GIF stops the currently running animation.
                             if let Some(id) = animation_layer.take() {
                                 dev.remove_layer(id);
                             }
                             animation_frames = None; // Validated, but loaded lazily on Start.
-                            let _ = frames;
+                            config.animation_settings = *studio.settings();
+                            studio_slot.set(studio);
                             config.animation_path = Some(path.clone());
                             config.animation_playing = false;
                             config_updated = true;
@@ -1868,16 +2216,15 @@ fn main() {
                                 sdl::SDL_SetTrayEntryChecked(tm_animation_check, false);
                                 sdl::SDL_SetTrayEntryEnabled(tm_animation_check, true);
                             }
+                            #[cfg(target_os = "windows")]
+                            {
+                                studio_ui.changed();
+                                studio_apply_due = None;
+                                preview_gif = None;
+                            }
                             last_time = Local::now() - TimeDelta::seconds(1);
                             last_media = None;
                             force_redraw = true;
-                        }
-                        Ok(_) => {
-                            MessageDialog::new()
-                                .set_level(MessageLevel::Error)
-                                .set_title("GxOled")
-                                .set_description("The selected GIF contains no frames.")
-                                .show();
                         }
                         Err(error) => {
                             MessageDialog::new()
@@ -1903,8 +2250,7 @@ fn main() {
                             tm_go_anim_radio.update_checked(None);
                         }
                         if animation_frames.is_none() {
-                            animation_frames=config.animation_path.as_ref().and_then(|path|
-                                try_decode_gif_frames(&path.to_string_lossy(),0x80).ok());
+                            animation_frames = studio_slot.get(&config, dev.dimensions()).map(studio_frames);
                         }
                         if let Some(frames) = &animation_frames {
                             let first = frames[0].bitmap.clone();
@@ -1922,6 +2268,7 @@ fn main() {
                                 x,
                                 y,
                                 follow_fps: false,
+                                repeat: config.animation_settings.looping,
                             }));
                             dev.play();
                             config.animation_playing = true;
@@ -1954,6 +2301,31 @@ fn main() {
                 MenuEvent::Quit => break 'main,
             }
         }
+        // GIF Studio: a setting changed. Re-render the GIF if it is playing on the OLED and persist the settings.
+        #[cfg(target_os = "windows")]
+        if studio_apply_due.is_some_and(|due| Instant::now() >= due) {
+            studio_apply_due = None;
+            config_updated = true;
+            preview_gif = None;
+            if config.animation_playing && animation_layer.is_some() {
+                if let Some(frames) = studio_slot.get(&config, dev.dimensions()).map(studio_frames) {
+                    if let Some(first) = frames.first() {
+                        let (x, y) = dev.center_bitmap(&first.bitmap);
+                        if let Some(id) = animation_layer.take() {
+                            dev.remove_layer(id);
+                        }
+                        animation_layer = Some(dev.add_layer(DrawLayer::Animation {
+                            frames,
+                            x,
+                            y,
+                            follow_fps: false,
+                            repeat: config.animation_settings.looping,
+                        }));
+                    }
+                }
+            }
+        }
+        studio_slot.release_if_idle();
         if config_updated {
             save_config(&config);
         }
@@ -2262,6 +2634,7 @@ fn main() {
         if last_preview_tick.elapsed() >= Duration::from_millis(40) || force_redraw {
             last_preview_tick = Instant::now();
             let (screen_w, screen_h) = dev.dimensions();
+            studio_ui_tick(&mut studio_ui, &mut studio_slot, &config, (screen_w, screen_h));
             let gif_path = config.animation_path.clone();
             let gif_wanted = config.animation_playing && gif_path.is_some();
             if !gif_wanted || preview_gif.as_ref().is_some_and(|(p, _)| Some(p) != gif_path.as_ref()) {
@@ -2271,8 +2644,8 @@ fn main() {
                 ((**frame).clone(), oled_available)
             } else if let Some(frame) = dev.latest_frame(Duration::from_millis(1500)) {
                 (frame, true)
-            } else if let (true, Some(path)) = (gif_wanted, &gif_path) {
-                (gif_preview_screen(&mut preview_gif, path, screen_w, screen_h), false)
+            } else if gif_wanted {
+                (gif_preview_screen(&mut preview_gif, &mut studio_slot, &config, screen_w, screen_h), false)
             } else if config.time_mode != ConfigTimeMode::Off && config.go_animation.is_none() {
                 let clock = dev.clock_screen(
                     config.clock_style.to_draw(),
@@ -2368,5 +2741,137 @@ mod volume_osd_hold_setting_tests {
         assert_eq!(new.volume_osd_hold_ms, 4000);
         let odd = Config::parse_config("volume_osd_hold_ms = 99999\n").expect("odd config parses");
         assert_eq!(odd.volume_osd_hold_ms, 5000);
+    }
+}
+
+#[cfg(test)]
+mod gif_studio_tests {
+    use super::*;
+    use gxoled_studio::{Dither, Fit, Settings};
+
+    fn temp_gif(name: &str, frames: &[(Bitmap, u32)]) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gxoled_app_studio_{}_{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let refs: Vec<(&Bitmap, u32)> = frames.iter().map(|(b, d)| (b, *d)).collect();
+        let path = dir.join("test.gif");
+        std::fs::write(&path, gxoled_studio::export::encode_gif(&refs, true).unwrap()).unwrap();
+        path
+    }
+
+    fn config_for(path: &std::path::Path) -> Config {
+        Config { animation_path: Some(path.to_owned()), ..Config::default() }
+    }
+
+    #[test]
+    fn settings_survive_a_config_round_trip_and_old_configs_get_the_defaults() {
+        let custom = Settings {
+            fit: Fit::Cover,
+            rotate: 270,
+            flip_h: true,
+            zoom: 1.25,
+            offset_x: -12,
+            dither: Dither::Atkinson,
+            invert: true,
+            looping: false,
+            speed: 2.5,
+            trim_start: 2,
+            trim_end: Some(9),
+            ..Settings::default()
+        };
+        let text = toml::to_string(&Config { animation_settings: custom, ..Config::default() }).expect("serialises");
+        let back = Config::parse_config(&text).expect("parses");
+        assert_eq!(back.animation_settings, custom);
+        // The default has `trim_end = None`, which TOML leaves out; it must come back as None.
+        let text = toml::to_string(&Config::default()).unwrap();
+        assert_eq!(Config::parse_config(&text).unwrap().animation_settings, Settings::default());
+        assert_eq!(Config::parse_config("show_media = true\n").unwrap().animation_settings, Settings::default());
+    }
+
+    #[test]
+    fn hand_edited_settings_are_clamped() {
+        let conf = Config::parse_config("[animation_settings]\nzoom = 40.0\nrotate = 91\nthreshold = 200\nspeed = 0.0\n").unwrap();
+        assert_eq!((conf.animation_settings.zoom, conf.animation_settings.rotate), (3.0, 90));
+        assert_eq!((conf.animation_settings.threshold, conf.animation_settings.speed), (200, 0.1));
+    }
+
+    #[test]
+    fn the_slot_loads_the_configured_gif_once_and_hands_out_playable_frames() {
+        let (mut on, mut off) = (Bitmap::new(128, 64, false), Bitmap::new(128, 64, false));
+        on.data.negate();
+        off.data.clear();
+        let path = temp_gif("load", &[(on, 100), (off, 250)]);
+        let config = config_for(&path);
+        let mut slot = StudioSlot::new();
+        let frames = {
+            let studio = slot.get(&config, SCREEN_DIMS).expect("loads");
+            assert_eq!(studio.frame_count(), 2);
+            studio_frames(studio)
+        };
+        assert_eq!(frames.len(), 2);
+        assert_eq!(frames[0].delay, Some(Duration::from_millis(100)));
+        assert_eq!(frames[1].delay, Some(Duration::from_millis(250)));
+        assert_eq!((frames[0].bitmap.w, frames[0].bitmap.h), (128, 64));
+        assert!(frames[0].bitmap.data.iter().all(|v| v), "white frame stays white");
+        assert!(frames[1].bitmap.data.iter().all(|v| !v), "black frame stays black");
+        // The same studio instance is returned while the path is unchanged.
+        assert!(slot.get(&config, SCREEN_DIMS).is_some());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn the_configured_settings_are_applied_to_the_frames() {
+        let mut half = Bitmap::new(128, 64, false);
+        for y in 0..64 {
+            for x in 0..64 {
+                half.data.set(y * 128 + x, true);
+            }
+        }
+        let path = temp_gif("settings", &[(half, 100)]);
+        let mut config = config_for(&path);
+        config.animation_settings = Settings { flip_h: true, dither: Dither::Threshold, ..Settings::default() };
+        let mut slot = StudioSlot::new();
+        let frames = studio_frames(slot.get(&config, SCREEN_DIMS).unwrap());
+        let b = &frames[0].bitmap;
+        assert!(!b.data[10 * 128 + 10] && b.data[10 * 128 + 120], "the lit half moved to the right");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_missing_or_broken_gif_is_reported_once_and_not_retried() {
+        let dir = std::env::temp_dir().join(format!("gxoled_app_studio_{}_broken", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("broken.gif");
+        std::fs::write(&path, b"not a gif").unwrap();
+        let config = config_for(&path);
+        let mut slot = StudioSlot::new();
+        assert!(slot.get(&config, SCREEN_DIMS).is_none());
+        assert_eq!(slot.failed.as_deref(), Some(path.as_path()));
+        // Even if the file becomes valid, the failed path is not re-read until the configuration points elsewhere.
+        std::fs::write(&path, gxoled_studio::export::encode_gif(&[(&Bitmap::new(8, 8, true), 100)], true).unwrap()).unwrap();
+        assert!(slot.get(&config, SCREEN_DIMS).is_none());
+        // Choosing the GIF again (a fresh studio is set) clears the failure.
+        let studio = gxoled_studio::Studio::open(path.clone(), Settings::default(), SCREEN_DIMS).unwrap();
+        slot.set(studio);
+        assert!(slot.failed.is_none() && slot.get(&config, SCREEN_DIMS).is_some());
+        // No GIF configured: nothing to hand out and nothing kept.
+        assert!(slot.get(&Config::default(), SCREEN_DIMS).is_none());
+        assert!(slot.studio.is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn an_idle_studio_gives_its_memory_back() {
+        let path = temp_gif("idle", &[(Bitmap::new(128, 64, true), 100)]);
+        let config = config_for(&path);
+        let mut slot = StudioSlot::new();
+        assert!(slot.get(&config, SCREEN_DIMS).is_some());
+        slot.release_if_idle();
+        assert!(slot.studio.is_some(), "still in use");
+        slot.last_used = Instant::now() - StudioSlot::IDLE_RELEASE - Duration::from_secs(1);
+        slot.release_if_idle();
+        assert!(slot.studio.is_none(), "released after being idle");
+        // It simply loads again when needed.
+        assert!(slot.get(&config, SCREEN_DIMS).is_some());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

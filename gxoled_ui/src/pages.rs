@@ -102,7 +102,7 @@ fn heading<'a>(c: &Ctx<'a>, page: Page) -> (&'a str, &'a str) {
         ),
         Page::GifStudio => (
             c.t("GIF Studio", "GIF Studio"),
-            c.t("Play your own GIFs on the OLED", "Kendi GIF'lerinizi OLED'de oynatın"),
+            c.t("Edit your GIFs and play them on the OLED", "GIF'lerinizi düzenleyin ve OLED'de oynatın"),
         ),
         Page::Display => (
             c.t("Display Control", "Ekran Kontrolü"),
@@ -469,20 +469,261 @@ fn animations(c: &mut Ctx, l: &Layout, y: f32) -> f32 {
 
 // ───────────────────────── GIF Studio ─────────────────────────
 
-fn gif_studio(c: &mut Ctx, l: &Layout, y: f32) -> f32 {
+/// Captions of the editor sliders, in the order the application supplies them (`gxoled_studio::Param::ALL`).
+const STUDIO_SLIDER_LABELS: [(&str, &str); ids::STUDIO_SLIDER_COUNT] = [
+    ("Zoom", "Yakınlaştırma"),
+    ("Horizontal shift", "Yatay kaydırma"),
+    ("Vertical shift", "Dikey kaydırma"),
+    ("Brightness", "Parlaklık"),
+    ("Contrast", "Kontrast"),
+    ("Gamma", "Gama"),
+    ("Threshold", "Eşik"),
+    ("Speed", "Hız"),
+    ("Minimum frame time", "En kısa kare süresi"),
+    ("First frame", "İlk kare"),
+    ("Last frame", "Son kare"),
+];
+
+const SLIDER_ROW_H: f32 = 52.0;
+const GROUP_LABEL_H: f32 = 24.0;
+const GROUP_GAP: f32 = 16.0;
+
+/// A labelled group of chips (radio group or toggles) inside a studio card.
+struct ChipGroup {
+    items: Vec<(u32, String, Option<String>)>,
+    icons: Vec<Option<&'static str>>,
+    plan: GridPlan,
+}
+
+impl ChipGroup {
+    fn new(c: &Ctx, w: f32, items: Vec<(u32, String, Option<&'static str>)>, max_cols: usize) -> Self {
+        let icons = items.iter().map(|(_, _, i)| *i).collect();
+        let items: Vec<(u32, String, Option<String>)> = items.into_iter().map(|(id, label, _)| (id, label, None)).collect();
+        let plan = GridPlan::new(c, w, &items, max_cols);
+        Self { items, icons, plan }
+    }
+
+    /// Height including its caption.
+    fn height(&self) -> f32 {
+        GROUP_LABEL_H + self.plan.height() + GROUP_GAP
+    }
+
+    fn draw(&self, c: &mut Ctx, x: f32, y: f32, caption: &str) -> f32 {
+        let color = c.p.text_muted;
+        let up = c.lang().upper(caption);
+        c.sc.text_mid(x, y + 8.0, &up, &Text::new(12.0, 600, color).spaced(1.5));
+        let top = y + GROUP_LABEL_H;
+        for (i, (id, label, _)) in self.items.iter().enumerate() {
+            let (col, row) = (i % self.plan.cols, i / self.plan.cols);
+            let r = Rect::new(
+                x + col as f32 * (self.plan.cw + GridPlan::GAP),
+                top + row as f32 * (GridPlan::CHIP_H + GridPlan::GAP),
+                self.plan.cw,
+                GridPlan::CHIP_H,
+            );
+            c.chip_w(r, *id, label, self.icons[i], None);
+        }
+        y + self.height()
+    }
+}
+
+/// Slider track, fill and knob (shared by the brightness slider and the studio sliders).
+fn draw_slider_track(c: &mut Ctx, id: u32, track: Rect, frac: f32, filled: bool) {
     let p = c.p;
-    let desc = c.t(
-        "Add a GIF, then start or stop playback on the 128×64 OLED. Editing tools will live here later.",
-        "Bir GIF ekleyin, sonra 128×64 OLED'de oynatmayı başlatın veya durdurun. Düzenleme araçları daha sonra burada olacak.",
-    );
+    c.sc.rect(track, 3.0, p.toggle_off);
+    if filled {
+        c.sc.rect(Rect::new(track.x, track.y, track.w * frac, track.h), 3.0, p.accent);
+    }
+    let kx = track.x + track.w * frac;
+    if c.hovered(id) || c.ix.pressed == Some(id) {
+        c.sc.raw(&format!(r##"<circle cx="{}" cy="{}" r="16" fill="#ff6b00" fill-opacity="0.2"/>"##, crate::scene::n(kx), crate::scene::n(track.cy())));
+    }
+    c.sc.circle(kx, track.cy(), 10.5, "#ffffff");
+    // On the light theme a white knob needs an outline to stand out from the card.
+    if !p.dark {
+        c.sc.ring(kx, track.cy(), 10.0, "#c4c8cf", 1.5);
+    } else if !filled {
+        c.sc.ring(kx, track.cy(), 10.0, p.ring, 1.5);
+    }
+}
+
+/// One editor slider: caption on the left, value read-out on the right, track below. Returns the next y.
+fn studio_slider(c: &mut Ctx, x: f32, y: f32, w: f32, index: usize) -> f32 {
+    let id = ids::STUDIO_SLIDER_BASE + index as u32;
+    let Some(s) = c.m.studio.slider(id).cloned() else { return y };
+    let (en, tr) = STUDIO_SLIDER_LABELS[index];
+    let (dim, text) = (c.p.text_dim, c.p.text);
+    c.sc.text_mid(x, y + 10.0, c.t(en, tr), &Text::new(14.0, 400, dim));
+    c.sc.text_mid(x + w, y + 10.0, &s.text, &Text::new(14.5, 600, text).end());
+    let track = Rect::new(x + 10.0, y + 36.0, w - 20.0, 6.0);
+    let span = (s.max - s.min).max(1) as f32;
+    let frac = ((s.value - s.min) as f32 / span).clamp(0.0, 1.0);
+    draw_slider_track(c, id, track, frac, true);
+    let hit = Rect::new(x, y + 22.0, w, 30.0);
+    c.sc.hit(hit, id, HitKind::Slider { track, min: s.min, max: s.max }, true);
+    c.focus_ring(id, hit, 10.0);
+    y + SLIDER_ROW_H
+}
+
+fn studio_sliders_height(n: usize) -> f32 {
+    n as f32 * SLIDER_ROW_H
+}
+
+fn gif_studio(c: &mut Ctx, l: &Layout, y: f32) -> f32 {
+    let loaded = c.m.studio.loaded;
     let text_w = l.lw - 48.0;
-    let dh = c.paragraph_height(text_w, desc, 15.0);
-    let card = Rect::new(l.lx, y, l.lw, 79.0 + dh + 20.0 + 44.0 + 26.0);
+    let x = l.lx + 24.0;
+
+    // ── Library card ──
+    let desc = if loaded {
+        c.m.studio.info.clone()
+    } else {
+        c.t(
+            "Add a GIF to edit it: fit, rotate, tone, dither and playback controls appear here. Then start or stop playback on the 128×64 OLED.",
+            "Düzenlemek için bir GIF ekleyin: sığdırma, döndürme, ton, dither ve oynatma ayarları burada açılır. Sonra 128×64 OLED'de oynatmayı başlatın veya durdurun.",
+        )
+        .to_owned()
+    };
+    let name = if loaded { c.fit(&c.m.studio.name.clone(), 15.0, 600, text_w) } else { String::new() };
+    let name_h = if loaded { 26.0 } else { 0.0 };
+    let dh = c.paragraph_height(text_w, &desc, 14.0);
+    let status = c.m.studio.status.clone();
+    let status_h = if status.is_empty() { 0.0 } else { 30.0 };
+    let card = Rect::new(l.lx, y, l.lw, 79.0 + name_h + dh + 20.0 + 44.0 + 12.0 + 44.0 + status_h + 24.0);
     let by = c.card(card, "image-play", Tone::Blue, c.t("GIF Library", "GIF Kitaplığı"));
-    let after = c.paragraph(l.lx + 24.0, by - 4.0, text_w, desc, 15.0, p.text_muted);
+    let mut ty = by - 4.0;
+    if loaded {
+        let text = c.p.text;
+        c.sc.text_mid(x, ty + 10.0, &name, &Text::new(15.0, 600, text));
+        ty += name_h;
+    }
+    let muted = c.p.text_muted;
+    let after = c.paragraph(x, ty, text_w, &desc, 14.0, muted);
     let bw = (text_w - 14.0) / 2.0;
-    c.button(Rect::new(l.lx + 24.0, after + 20.0, bw, 44.0), ids::GIF_ADD, c.t("Add GIF…", "GIF ekle…"), ButtonKind::Primary, Some("folder-plus"));
-    c.button(Rect::new(l.lx + 24.0 + bw + 14.0, after + 20.0, bw, 44.0), ids::GIF_TOGGLE, c.t("Start / Stop GIF", "GIF başlat / durdur"), ButtonKind::Secondary, Some("circle-play"));
+    let r1 = after + 20.0;
+    c.button(Rect::new(x, r1, bw, 44.0), ids::GIF_ADD, c.t("Add GIF…", "GIF ekle…"), ButtonKind::Primary, Some("folder-plus"));
+    c.button(Rect::new(x + bw + 14.0, r1, bw, 44.0), ids::GIF_TOGGLE, c.t("Start / Stop GIF", "GIF başlat / durdur"), ButtonKind::Secondary, Some("circle-play"));
+    let r2 = r1 + 56.0;
+    let bw3 = (text_w - 28.0) / 3.0;
+    c.button(Rect::new(x, r2, bw3, 44.0), ids::STUDIO_OPEN, c.t("Open project…", "Proje aç…"), ButtonKind::Secondary, Some("file-up"));
+    c.button(Rect::new(x + bw3 + 14.0, r2, bw3, 44.0), ids::STUDIO_SAVE, c.t("Save project…", "Projeyi kaydet…"), ButtonKind::Secondary, Some("save"));
+    c.button(Rect::new(x + 2.0 * (bw3 + 14.0), r2, bw3, 44.0), ids::STUDIO_EXPORT, c.t("Export GIF…", "GIF olarak dışa aktar…"), ButtonKind::Secondary, Some("download"));
+    if !status.is_empty() {
+        let color = if c.m.studio.status_ok { c.p.green } else { "#ef4444" };
+        let shown = c.fit(&status, 13.5, 500, text_w);
+        c.sc.text_mid(x, r2 + 44.0 + 20.0, &shown, &Text::new(13.5, 500, color));
+    }
+    let mut bottom = card.bottom();
+    if !loaded {
+        return bottom;
+    }
+
+    // ── Preview card: source frame and the 1-bit result, side by side ──
+    bottom += GAP;
+    let pane_w = (text_w - 16.0) / 2.0;
+    let pane_h = (pane_w / 2.0).round();
+    let card = Rect::new(l.lx, bottom, l.lw, 79.0 + 22.0 + pane_h + 24.0);
+    let by = c.card(card, "monitor-play", Tone::Violet, c.t("Preview", "Önizleme"));
+    let up = |c: &Ctx, s: &str| c.lang().upper(s);
+    let (src_cap, oled_cap) = (up(c, c.t("Source", "Kaynak")), up(c, c.t("OLED result", "OLED sonucu")));
+    c.sc.text_mid(x, by - 4.0, &src_cap, &Text::new(12.0, 600, muted).spaced(1.5));
+    c.sc.text_mid(x + pane_w + 16.0, by - 4.0, &oled_cap, &Text::new(12.0, 600, muted).spaced(1.5));
+    let (oled_bg, oled_border) = (c.p.oled_bg, c.p.oled_border);
+    for (i, kind) in [OverlayKind::StudioSource, OverlayKind::StudioMono].into_iter().enumerate() {
+        let r = Rect::new(x + i as f32 * (pane_w + 16.0), by + 18.0, pane_w, pane_h);
+        c.sc.rect_border(r, 10.0, oled_bg, oled_border, 1.0);
+        c.sc.overlay(r.inset(1.0), kind, 9.0);
+    }
+    bottom = card.bottom() + GAP;
+
+    // ── Picture card ──
+    let fit = ChipGroup::new(
+        c,
+        text_w,
+        vec![
+            (ids::STUDIO_FIT_CONTAIN, c.t("Contain", "Sığdır").to_owned(), Some("scan")),
+            (ids::STUDIO_FIT_COVER, c.t("Cover", "Doldur").to_owned(), Some("crop")),
+            (ids::STUDIO_FIT_STRETCH, c.t("Stretch", "Uzat").to_owned(), Some("maximize-2")),
+        ],
+        3,
+    );
+    let rotate = ChipGroup::new(
+        c,
+        text_w,
+        (0..4u32).map(|i| (ids::STUDIO_ROTATE_BASE + i, format!("{}°", i * 90), Some("rotate-cw"))).collect(),
+        4,
+    );
+    let flips = ChipGroup::new(
+        c,
+        text_w,
+        vec![
+            (ids::STUDIO_FLIP_H, c.t("Flip horizontally", "Yatay çevir").to_owned(), Some("flip-horizontal-2")),
+            (ids::STUDIO_FLIP_V, c.t("Flip vertically", "Dikey çevir").to_owned(), Some("flip-vertical-2")),
+        ],
+        2,
+    );
+    let card = Rect::new(l.lx, bottom, l.lw, 79.0 + fit.height() + rotate.height() + flips.height() + studio_sliders_height(3) + 14.0);
+    let mut cy = c.card(card, "crop", Tone::Green, c.t("Picture", "Görüntü")) - 4.0;
+    cy = fit.draw(c, x, cy, c.t("Fit", "Yerleşim"));
+    cy = rotate.draw(c, x, cy, c.t("Rotate", "Döndür"));
+    cy = flips.draw(c, x, cy, c.t("Mirror", "Yansıt"));
+    for i in 0..3 {
+        cy = studio_slider(c, x, cy, text_w, i);
+    }
+    bottom = card.bottom() + GAP;
+
+    // ── Tone card ──
+    let background = ChipGroup::new(
+        c,
+        text_w,
+        vec![
+            (ids::STUDIO_BG_BLACK, c.t("Black background", "Siyah zemin").to_owned(), None),
+            (ids::STUDIO_BG_WHITE, c.t("White background", "Beyaz zemin").to_owned(), None),
+        ],
+        2,
+    );
+    let toggles = ChipGroup::new(
+        c,
+        text_w,
+        vec![
+            (ids::STUDIO_INPUT_INVERT, c.t("Invert source", "Kaynağı ters çevir").to_owned(), Some("contrast")),
+            (ids::STUDIO_NORMALIZE, c.t("Auto levels", "Otomatik seviye").to_owned(), Some("wand-sparkles")),
+            (ids::STUDIO_INVERT, c.t("Invert result", "Sonucu ters çevir").to_owned(), Some("contrast")),
+        ],
+        3,
+    );
+    let dither = ChipGroup::new(
+        c,
+        text_w,
+        vec![
+            (ids::STUDIO_DITHER_BASE, "Floyd–Steinberg".to_owned(), None),
+            (ids::STUDIO_DITHER_BASE + 1, "Atkinson".to_owned(), None),
+            (ids::STUDIO_DITHER_BASE + 2, c.t("Ordered (Bayer)", "Sıralı (Bayer)").to_owned(), None),
+            (ids::STUDIO_DITHER_BASE + 3, c.t("Threshold only", "Yalnız eşik").to_owned(), None),
+            (ids::STUDIO_DITHER_BASE + 4, c.t("None", "Yok").to_owned(), None),
+        ],
+        3,
+    );
+    let card = Rect::new(l.lx, bottom, l.lw, 79.0 + background.height() + toggles.height() + dither.height() + studio_sliders_height(4) + 14.0);
+    let mut cy = c.card(card, "sliders-horizontal", Tone::Orange, c.t("Tone & dither", "Ton ve dither")) - 4.0;
+    cy = background.draw(c, x, cy, c.t("Transparent areas", "Saydam alanlar"));
+    cy = toggles.draw(c, x, cy, c.t("Levels", "Seviyeler"));
+    for i in 3..7 {
+        cy = studio_slider(c, x, cy, text_w, i);
+    }
+    cy = dither.draw(c, x, cy + 8.0, c.t("Dither", "Dither"));
+    let _ = cy;
+    bottom = card.bottom() + GAP;
+
+    // ── Playback card ──
+    let looping = ChipGroup::new(c, text_w, vec![(ids::STUDIO_LOOP, c.t("Loop", "Döngü").to_owned(), Some("repeat"))], 1);
+    let card = Rect::new(l.lx, bottom, l.lw, 79.0 + looping.height() + studio_sliders_height(4) + 14.0 + 44.0 + 24.0);
+    let mut cy = c.card(card, "timer", Tone::Blue, c.t("Playback", "Oynatma")) - 4.0;
+    cy = looping.draw(c, x, cy, c.t("Repeat", "Tekrar"));
+    for i in 7..11 {
+        cy = studio_slider(c, x, cy, text_w, i);
+    }
+    c.button(Rect::new(x, cy + 14.0, text_w, 44.0), ids::STUDIO_RESET, c.t("Reset all settings", "Tüm ayarları sıfırla"), ButtonKind::Danger, Some("rotate-ccw"));
     card.bottom()
 }
 
@@ -644,22 +885,7 @@ fn slider(c: &mut Ctx, r: Rect) {
     let track = Rect::new(r.x + 8.0, r.cy() - 3.0, r.w - label_w - 24.0, 6.0);
     let value = c.m.brightness;
     let frac = value.map(|v| (v.clamp(1, 10) as f32 - 1.0) / 9.0).unwrap_or(0.5);
-    c.sc.rect(track, 3.0, p.toggle_off);
-    if value.is_some() {
-        c.sc.rect(Rect::new(track.x, track.y, track.w * frac, track.h), 3.0, p.accent);
-    }
-    let kx = track.x + track.w * frac;
-    let active = c.hovered(id) || c.ix.pressed == Some(id);
-    if active {
-        c.sc.raw(&format!(r##"<circle cx="{}" cy="{}" r="16" fill="#ff6b00" fill-opacity="0.2"/>"##, crate::scene::n(kx), crate::scene::n(track.cy())));
-    }
-    c.sc.circle(kx, track.cy(), 10.5, "#ffffff");
-    // On the light theme a white knob needs an outline to stand out from the card.
-    if !p.dark {
-        c.sc.ring(kx, track.cy(), 10.0, "#c4c8cf", 1.5);
-    } else if value.is_none() {
-        c.sc.ring(kx, track.cy(), 10.0, p.ring, 1.5);
-    }
+    draw_slider_track(c, id, track, frac, value.is_some());
     let text = match value {
         Some(v) => format!("{}%", v as u32 * 10),
         None => c.t("Default", "Varsayılan").to_owned(),

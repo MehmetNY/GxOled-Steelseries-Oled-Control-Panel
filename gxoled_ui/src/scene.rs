@@ -46,7 +46,7 @@ pub enum HitKind {
     /// Sidebar page switch; `id` is `ids::NAV_BASE + page index`.
     Nav,
     /// Horizontal slider; the track rect maps x to a value in `min..=max`.
-    Slider { track: Rect, min: u8, max: u8 },
+    Slider { track: Rect, min: i32, max: i32 },
     /// Row of the profile list (`id` = `ids::LIST_BASE + row`).
     ListRow,
 }
@@ -68,6 +68,10 @@ pub enum OverlayKind {
     Oled,
     /// The donation QR image.
     Qr,
+    /// GIF Studio: the source frame (`UiModel::studio.source`).
+    StudioSource,
+    /// GIF Studio: the 1-bit result (`UiModel::studio.mono`).
+    StudioMono,
 }
 
 #[derive(Clone, Copy, Debug)]

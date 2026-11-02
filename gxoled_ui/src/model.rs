@@ -78,6 +78,44 @@ pub struct Image {
     pub rgba: Vec<u8>,
 }
 
+/// One slider of the GIF Studio editor. The application decides the meaning; the UI only draws and moves it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StudioSlider {
+    pub id: u32,
+    pub min: i32,
+    pub max: i32,
+    pub value: i32,
+    /// Read-out next to the slider ("1.25×", "+12 px", …).
+    pub text: String,
+}
+
+/// State of the GIF Studio editor (the "GIF Studio" page).
+#[derive(Clone, Debug, Default)]
+pub struct StudioModel {
+    /// A GIF is open; the editing cards are shown only then.
+    pub loaded: bool,
+    pub name: String,
+    /// "128×64 · 24 frames · 2.4 s" style description of the source.
+    pub info: String,
+    /// In `ids::STUDIO_SLIDER_BASE` order.
+    pub sliders: Vec<StudioSlider>,
+    /// The frame being previewed, straight-alpha RGBA, already shrunk to preview size.
+    pub source: Option<Image>,
+    /// 1-bit result of the same frame, row-major, `mono_w * mono_h` entries.
+    pub mono: Vec<bool>,
+    pub mono_w: usize,
+    pub mono_h: usize,
+    /// Result of the last Save / Export / Open action; empty hides the line.
+    pub status: String,
+    pub status_ok: bool,
+}
+
+impl StudioModel {
+    pub fn slider(&self, id: u32) -> Option<&StudioSlider> {
+        self.sliders.iter().find(|s| s.id == id)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct UiModel {
     pub surface: Surface,
@@ -102,6 +140,7 @@ pub struct UiModel {
     /// "v0.5.3" style label for the footer / info rows.
     pub version: String,
     pub qr: Option<Image>,
+    pub studio: StudioModel,
     /// Profile name shown under the editor heading (editor surface only).
     pub editor_title: String,
     /// Result of the last Save / Validate action; empty hides the status line.
@@ -130,6 +169,7 @@ impl Default for UiModel {
             device_name: "SteelSeries Arctis Nova Pro Wireless".to_owned(),
             version: "v0.0.0".to_owned(),
             qr: None,
+            studio: StudioModel::default(),
             editor_title: String::new(),
             editor_status: String::new(),
             editor_status_ok: true,
@@ -156,6 +196,8 @@ pub enum UiEvent {
     Action(u32),
     /// Brightness slider moved to 1..=10.
     Brightness(u8),
+    /// A GIF Studio slider moved (`ids::STUDIO_SLIDER_BASE + index`, new value).
+    Slider(u32, i32),
     /// Profile list selection changed to this row.
     ProfileSelected(usize),
     /// Sidebar page changed (already applied in the model; host may want to persist it).

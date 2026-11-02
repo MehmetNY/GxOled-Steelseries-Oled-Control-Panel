@@ -3,7 +3,7 @@
 
 use gxoled_ui::{
     ids,
-    model::{Cursor, Lang, Page, UiEvent, UiModel, OLED_H, OLED_W},
+    model::{Cursor, Image, Lang, Page, StudioModel, StudioSlider, UiEvent, UiModel, OLED_H, OLED_W},
     scene::{Hit, HitKind},
     Key, Ui,
 };
@@ -493,4 +493,169 @@ fn editor_renders_in_both_languages_and_themes_with_long_status() {
             assert_eq!((f.width, f.height), (930, 680));
         }
     }
+}
+
+// ───────────────────────── GIF Studio ─────────────────────────
+
+fn studio_model(lang: Lang, dark: bool) -> UiModel {
+    // (min, max, value) in the order of `gxoled_studio::Param::ALL`.
+    let spec: [(i32, i32, i32); ids::STUDIO_SLIDER_COUNT] =
+        [(20, 300, 100), (-64, 64, 0), (-64, 64, 0), (-100, 100, 0), (-100, 100, 0), (10, 300, 100), (0, 255, 128), (10, 500, 100), (10, 200, 30), (0, 23, 0), (0, 23, 23)];
+    let studio = StudioModel {
+        loaded: true,
+        name: "a-very-long-file-name-that-would-not-fit-on-one-line-in-any-reasonable-window-at-all.gif".into(),
+        info: "96×64 · 24 frames · 2.4 s".into(),
+        sliders: spec
+            .iter()
+            .enumerate()
+            .map(|(i, (min, max, value))| StudioSlider { id: ids::STUDIO_SLIDER_BASE + i as u32, min: *min, max: *max, value: *value, text: value.to_string() })
+            .collect(),
+        source: Some(Image { w: 2, h: 1, rgba: vec![255, 0, 0, 255, 0, 0, 255, 255] }),
+        mono: (0..128 * 64).map(|i| i % 2 == 0).collect(),
+        mono_w: 128,
+        mono_h: 64,
+        status: "Exported a file with a long name to a folder with an even longer name than that".into(),
+        status_ok: false,
+    };
+    UiModel {
+        lang,
+        dark,
+        studio,
+        checked: vec![ids::STUDIO_FIT_CONTAIN, ids::STUDIO_ROTATE_BASE, ids::STUDIO_BG_BLACK, ids::STUDIO_DITHER_BASE, ids::STUDIO_LOOP],
+        ..model(Page::GifStudio)
+    }
+}
+
+fn studio_ui(w: u32, h: u32, dpi: f32) -> Ui {
+    let mut ui = Ui::new();
+    ui.set_size(w, h, dpi);
+    ui.model = studio_model(Lang::En, true);
+    ui.invalidate();
+    ui.frame().expect("frame");
+    ui
+}
+
+#[test]
+fn studio_controls_appear_only_with_a_gif() {
+    let empty = ui(Page::GifStudio, W, H, 1.0);
+    let ids_without: Vec<u32> = empty.hits().iter().map(|h| h.id).collect();
+    assert!(ids_without.contains(&ids::GIF_ADD) && ids_without.contains(&ids::STUDIO_OPEN));
+    assert!(!ids_without.iter().any(|id| (ids::STUDIO_SLIDER_BASE..ids::STUDIO_SLIDER_BASE + 50).contains(id)));
+    assert!(!ids_without.contains(&ids::STUDIO_RESET));
+
+    let full = studio_ui(W, H, 1.0);
+    let present: Vec<u32> = full.hits().iter().map(|h| h.id).collect();
+    for i in 0..ids::STUDIO_SLIDER_COUNT as u32 {
+        assert!(present.contains(&(ids::STUDIO_SLIDER_BASE + i)), "slider {i}");
+    }
+    for id in [
+        ids::STUDIO_FIT_CONTAIN, ids::STUDIO_FIT_COVER, ids::STUDIO_FIT_STRETCH, ids::STUDIO_FLIP_H, ids::STUDIO_FLIP_V,
+        ids::STUDIO_BG_BLACK, ids::STUDIO_BG_WHITE, ids::STUDIO_INPUT_INVERT, ids::STUDIO_NORMALIZE, ids::STUDIO_INVERT,
+        ids::STUDIO_LOOP, ids::STUDIO_RESET, ids::STUDIO_SAVE, ids::STUDIO_EXPORT, ids::STUDIO_OPEN, ids::GIF_TOGGLE,
+    ] {
+        assert!(present.contains(&id), "control {id}");
+    }
+    for i in 0..4 {
+        assert!(present.contains(&(ids::STUDIO_ROTATE_BASE + i)), "rotate {i}");
+    }
+    for i in 0..5 {
+        assert!(present.contains(&(ids::STUDIO_DITHER_BASE + i)), "dither {i}");
+    }
+}
+
+#[test]
+fn studio_ids_are_unique_and_do_not_collide_with_other_pages() {
+    let ui = studio_ui(W, H, 1.0);
+    let mut seen = std::collections::HashSet::new();
+    for h in ui.hits() {
+        assert!(seen.insert(h.id), "duplicate id {}", h.id);
+    }
+}
+
+#[test]
+fn studio_page_renders_everywhere_and_stays_inside_the_window() {
+    for (w, h, dpi) in [(W, H, 1.0), (1015, 682, 1.0), (800, 538, 1.0), (1860, 1260, 1.5)] {
+        for lang in [Lang::En, Lang::Tr] {
+            for dark in [true, false] {
+                let mut ui = Ui::new();
+                ui.set_size(w, h, dpi);
+                ui.model = studio_model(lang, dark);
+                ui.invalidate();
+                assert!(ui.frame().is_some());
+                let design_w = w as f32 / Ui::scale_for(w, dpi);
+                for hit in ui.hits() {
+                    let r = hit.rect;
+                    assert!(r.x.is_finite() && r.y.is_finite() && r.w > 0.0 && r.h > 0.0, "{w}x{h} {}", hit.id);
+                    assert!(r.x >= -0.5 && r.right() <= design_w + 0.5, "{w}x{h} id {} spills out: {r:?}", hit.id);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn studio_slider_drag_reports_the_value_and_clamps_to_its_range() {
+    let mut ui = studio_ui(W, 2600, 1.0);
+    let id = ids::STUDIO_SLIDER_BASE + 3; // brightness -100..=100
+    let hit = find(&ui, id);
+    let HitKind::Slider { track, min, max } = hit.kind else { panic!("not a slider") };
+    assert_eq!((min, max), (-100, 100));
+    let s = Ui::scale_for(W, 1.0);
+    let y = (track.cy() - ui.scroll_offset()) * s;
+    ui.mouse_down((track.x + track.w * 0.75) * s, y);
+    let events = ui.take_events();
+    let Some(UiEvent::Slider(got_id, v)) = events.last() else { panic!("no slider event: {events:?}") };
+    assert_eq!(*got_id, id);
+    assert!((48..=52).contains(v), "75% of -100..100 is about 50, got {v}");
+    assert_eq!(ui.model.studio.slider(id).unwrap().value, *v);
+    ui.mouse_move(0.0, y);
+    assert!(matches!(ui.take_events().last(), Some(UiEvent::Slider(i, -100)) if *i == id));
+    ui.mouse_move(W as f32 * s, y);
+    assert!(matches!(ui.take_events().last(), Some(UiEvent::Slider(i, 100)) if *i == id));
+    ui.mouse_up(0.0, 0.0);
+    assert!(ui.take_events().is_empty(), "releasing a drag is not a click");
+    // The brightness slider of the Display page is a different control and must not have moved.
+    assert_eq!(ui.model.brightness, Some(7));
+}
+
+#[test]
+fn studio_slider_keys_step_and_percent_ranges_move_faster() {
+    let mut ui = studio_ui(W, 2600, 1.0);
+    for (index, expect_step) in [(1usize, 1), (0usize, 2)] {
+        let id = ids::STUDIO_SLIDER_BASE + index as u32;
+        let hit = find(&ui, id);
+        let (x, y) = centre(&ui, &hit, W, 1.0);
+        ui.mouse_down(x, y);
+        ui.mouse_up(x, y);
+        ui.take_events();
+        let before = ui.model.studio.slider(id).unwrap().value;
+        ui.key_down(Key::Right);
+        assert_eq!(ui.take_events(), vec![UiEvent::Slider(id, before + expect_step)], "slider {index}");
+        ui.key_down(Key::Left);
+        assert_eq!(ui.model.studio.slider(id).unwrap().value, before, "slider {index}");
+    }
+}
+
+#[test]
+fn studio_chips_report_actions() {
+    let mut ui = studio_ui(W, 2600, 1.0);
+    click(&mut ui, ids::STUDIO_DITHER_BASE + 1);
+    assert_eq!(ui.take_events().last(), Some(&UiEvent::Action(ids::STUDIO_DITHER_BASE + 1)));
+    click(&mut ui, ids::STUDIO_RESET);
+    assert_eq!(ui.take_events().last(), Some(&UiEvent::Action(ids::STUDIO_RESET)));
+}
+
+#[test]
+fn studio_preview_pixels_reach_the_frame_and_refresh_without_a_full_render() {
+    let mut ui = studio_ui(W, 2600, 1.0);
+    let before = ui.frame().unwrap().rgba.to_vec();
+    // Flip every OLED pixel of the result pane; only the overlay may change.
+    ui.model.studio.mono = (0..128 * 64).map(|i| i % 2 != 0).collect();
+    ui.refresh_overlays();
+    let after = ui.frame().unwrap().rgba.to_vec();
+    assert_ne!(before, after, "the 1-bit pane did not update");
+    assert_eq!(before.len(), after.len());
+    // The source pane shows the two-colour sample (red | blue) somewhere in the frame.
+    let has = |rgba: &[u8], px: [u8; 3]| rgba.chunks_exact(4).any(|c| c[..3] == px);
+    assert!(has(&after, [255, 0, 0]) && has(&after, [0, 0, 255]));
 }

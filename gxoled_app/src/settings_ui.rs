@@ -145,6 +145,19 @@ pub fn preview(bitmap: &Bitmap, live: bool) {
     guarded(|| modern_ui::preview(bitmap, live));
 }
 
+/// `true` while the modern settings window shows the GIF Studio page (the classic window has no editor).
+pub fn studio_page_visible() -> bool {
+    guarded(modern_ui::studio_page_visible).unwrap_or(false)
+}
+
+pub fn set_studio_state(state: gxoled_ui::model::StudioModel) {
+    guarded(|| modern_ui::set_studio_state(state));
+}
+
+pub fn set_studio_preview(source: Option<gxoled_ui::model::Image>, mono: &Bitmap) {
+    guarded(|| modern_ui::set_studio_preview(source, mono));
+}
+
 pub fn set_connected(connected: bool) {
     guarded(|| modern_ui::set_connected(connected));
 }

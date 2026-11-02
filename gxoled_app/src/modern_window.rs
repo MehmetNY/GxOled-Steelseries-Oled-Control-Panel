@@ -302,33 +302,38 @@ impl Win {
         }
     }
 
-    /// Copy only the live-OLED rectangle of the composited frame into the BGRA buffer.
-    fn refresh_oled_region(&mut self) -> Option<RECT> {
+    /// Copy only the live raster regions (OLED mirror, GIF Studio previews) of the composited frame into the BGRA
+    /// buffer. Returns the rectangles that changed.
+    fn refresh_oled_regions(&mut self) -> Vec<RECT> {
         if self.ui.needs_render() {
-            return None; // a full repaint is already pending and will pick the new pixels up
+            return Vec::new(); // a full repaint is already pending and will pick the new pixels up
         }
         self.ui.refresh_overlays();
-        let (x, y, w, h) = self.ui.oled_rect_px()?;
-        let f = self.ui.current_frame()?;
+        let rects = self.ui.live_rects_px();
+        let Some(f) = self.ui.current_frame() else { return Vec::new() };
         if f.width as i32 != self.frame_w || f.height as i32 != self.frame_h || self.bgra.len() != f.rgba.len() {
-            return None;
+            return Vec::new();
         }
-        let (x0, y0) = (x.max(0), y.max(0));
-        let (x1, y1) = ((x + w).min(self.frame_w), (y + h).min(self.frame_h));
-        if x1 <= x0 || y1 <= y0 {
-            return None;
-        }
-        for row in y0..y1 {
-            let a = ((row * self.frame_w + x0) * 4) as usize;
-            let b = ((row * self.frame_w + x1) * 4) as usize;
-            for (d, s) in self.bgra[a..b].chunks_exact_mut(4).zip(f.rgba[a..b].chunks_exact(4)) {
-                d[0] = s[2];
-                d[1] = s[1];
-                d[2] = s[0];
-                d[3] = 255;
+        let mut changed = Vec::new();
+        for (x, y, w, h) in rects {
+            let (x0, y0) = (x.max(0), y.max(0));
+            let (x1, y1) = ((x + w).min(self.frame_w), (y + h).min(self.frame_h));
+            if x1 <= x0 || y1 <= y0 {
+                continue;
             }
+            for row in y0..y1 {
+                let a = ((row * self.frame_w + x0) * 4) as usize;
+                let b = ((row * self.frame_w + x1) * 4) as usize;
+                for (d, s) in self.bgra[a..b].chunks_exact_mut(4).zip(f.rgba[a..b].chunks_exact(4)) {
+                    d[0] = s[2];
+                    d[1] = s[1];
+                    d[2] = s[0];
+                    d[3] = 255;
+                }
+            }
+            changed.push(RECT { left: x0, top: y0, right: x1, bottom: y1 });
         }
-        Some(RECT { left: x0, top: y0, right: x1, bottom: y1 })
+        changed
     }
 }
 
@@ -841,8 +846,10 @@ pub fn present_oled(kind: Kind) {
     if !is_visible(kind) {
         return;
     }
-    if let Some(Some(rect)) = with_win(hwnd, |w| w.refresh_oled_region()) {
-        unsafe { InvalidateRect(hwnd, &rect, 0) };
+    if let Some(rects) = with_win(hwnd, |w| w.refresh_oled_regions()) {
+        for rect in rects {
+            unsafe { InvalidateRect(hwnd, &rect, 0) };
+        }
     }
 }
 

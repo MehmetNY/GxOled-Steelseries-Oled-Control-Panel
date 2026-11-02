@@ -77,6 +77,15 @@ pub fn svg_inner(name: &str) -> Option<&'static str> {
         "layout-panel-top" => r##"<rect width="18" height="7" x="3" y="3" rx="1"/> <rect width="7" height="7" x="3" y="14" rx="1"/> <rect width="7" height="7" x="14" y="14" rx="1"/>"##,
         "heart-handshake" => r##"<path d="M19.414 14.414C21 12.828 22 11.5 22 9.5a5.5 5.5 0 0 0-9.591-3.676.6.6 0 0 1-.818.001A5.5 5.5 0 0 0 2 9.5c0 2.3 1.5 4 3 5.5l5.535 5.362a2 2 0 0 0 2.879.052 2.12 2.12 0 0 0-.004-3 2.124 2.124 0 1 0 3-3 2.124 2.124 0 0 0 3.004 0 2 2 0 0 0 0-2.828l-1.881-1.882a2.41 2.41 0 0 0-3.409 0l-1.71 1.71a2 2 0 0 1-2.828 0 2 2 0 0 1 0-2.828l2.823-2.762"/>"##,
         "image-play" => r##"<path d="M15 15.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997a1 1 0 0 1-1.517-.86z"/> <path d="M21 12.17V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/> <path d="m6 21 5-5"/> <circle cx="9" cy="9" r="2"/>"##,
+        "flip-horizontal-2" => r##"<path d="M10 12H8"/> <path d="M16 12h-2"/> <path d="M22 12h-2"/> <path d="M4 12H2"/> <path d="M7.298 20.288A1 1 0 008 22h8a1 1 0 00.703-1.712l-3.991-3.99a1 1 0 00-1.424-.001z"/> <path d="M7.298 3.712A1 1 0 018 2h8a1 1 0 01.703 1.712l-3.991 3.99a1 1 0 01-1.424.001z"/>"##,
+        "flip-vertical-2" => r##"<path d="M12 14v2"/> <path d="M12 20v2"/> <path d="M12 2v2"/> <path d="M12 8v2"/> <path d="M20.288 16.703A1 1 0 0022 16V8a1 1 0 00-1.712-.703l-3.99 3.991a1 1 0 00-.001 1.424z"/> <path d="M3.712 16.703A1 1 0 012 16V8a1 1 0 011.712-.703l3.99 3.991a1 1 0 01.001 1.424z"/>"##,
+        "contrast" => r##"<circle cx="12" cy="12" r="10"/> <path d="M12 18a6 6 0 0 0 0-12v12z"/>"##,
+        "repeat" => r##"<path d="m17 2 4 4-4 4"/> <path d="M3 11v-1a4 4 0 0 1 4-4h14"/> <path d="m7 22-4-4 4-4"/> <path d="M21 13v1a4 4 0 0 1-4 4H3"/>"##,
+        "rotate-cw" => r##"<path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/> <path d="M21 3v5h-5"/>"##,
+        "crop" => r##"<path d="M6 2v14a2 2 0 0 0 2 2h14"/> <path d="M18 22V8a2 2 0 0 0-2-2H2"/>"##,
+        "maximize-2" => r##"<path d="M15 3h6v6"/> <path d="m21 3-7 7"/> <path d="m3 21 7-7"/> <path d="M9 21H3v-6"/>"##,
+        "palette" => r##"<path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"/> <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/> <circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/> <circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/> <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/>"##,
+        "scissors" => r##"<circle cx="6" cy="6" r="3"/> <path d="M8.12 8.12 12 12"/> <path d="M20 4 8.12 15.88"/> <circle cx="6" cy="18" r="3"/> <path d="M14.8 14.8 20 20"/>"##,
         _ => return None,
     })
 }

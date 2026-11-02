@@ -6,5 +6,11 @@ description = "GxOled modern settings UI: SVG scene + resvg software renderer, n
 license = "GPL-3.0-only"
 
 [dependencies]
+# GIF Studio engine: the editor page is bound to its settings in `studio_bind`.
+gxoled_studio = { path = "../gxoled_studio" }
+
 # Pure-Rust renderer. `text` brings rustybuzz shaping + kerning; fonts are embedded, system fonts are NOT loaded.
 resvg = { version = "0.49", default-features = false, features = ["text"] }
+
+[dev-dependencies]
+gif = "0.14"

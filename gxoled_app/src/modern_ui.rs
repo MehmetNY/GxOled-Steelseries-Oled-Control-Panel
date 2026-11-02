@@ -16,7 +16,7 @@ use std::{
 use gxoled_lib::Bitmap;
 use gxoled_ui::{
     Ui, ids,
-    model::{Image, Lang, UiEvent},
+    model::{Image, Lang, Page, StudioModel, UiEvent},
 };
 
 use super::{
@@ -53,6 +53,7 @@ struct Bridge {
     connected: bool,
     oled: Vec<bool>,
     oled_live: bool,
+    studio: StudioModel,
     editor: Option<EditorCtx>,
 }
 
@@ -143,6 +144,7 @@ fn snapshot(c: &Config) -> Snapshot {
             ConfigUiStyle::Classic => ids::UI_CLASSIC,
         },
     ];
+    checked.extend(gxoled_ui::studio_bind::checked_ids(&c.animation_settings));
     if c.idle_timeout {
         checked.push(ids::IDLE);
     }
@@ -216,6 +218,7 @@ pub fn init(tx: Sender<MenuEvent>, config: &Config) {
             connected: false,
             oled: vec![false; 128 * 64],
             oled_live: true,
+            studio: StudioModel::default(),
             editor: None,
         });
     });
@@ -286,6 +289,7 @@ fn ensure_settings() -> Result<(), String> {
         ui.model.profile_selected = b.selected.min(b.entries.len().saturating_sub(1));
         ui.model.set_oled_bitmap(b.oled.iter().copied());
         ui.model.oled_live = b.oled_live;
+        ui.model.studio = b.studio.clone();
         if let Some(s) = b.snapshot.clone() {
             apply_snapshot(&mut ui, &s, &b.entries, true);
         }
@@ -403,6 +407,55 @@ pub fn preview(bitmap: &Bitmap, live: bool) {
     modern_window::present_oled(Kind::Settings);
 }
 
+/// `true` while the settings window is on screen showing the GIF Studio page.
+pub fn studio_page_visible() -> bool {
+    modern_window::is_visible(Kind::Settings)
+        && modern_window::with_ui(Kind::Settings, |ui| ui.model.page == Page::GifStudio).unwrap_or(false)
+}
+
+/// The animated previews of `old` carried over into the new editor state.
+fn keep_preview(mut new: StudioModel, old: StudioModel) -> StudioModel {
+    new.source = old.source;
+    new.mono = old.mono;
+    new.mono_w = old.mono_w;
+    new.mono_h = old.mono_h;
+    new
+}
+
+/// Replace the editor's controls (name, sliders, status). The animated previews are kept.
+pub fn set_studio_state(state: StudioModel) {
+    with_bridge(|b| {
+        let old = std::mem::take(&mut b.studio);
+        b.studio = keep_preview(state.clone(), old);
+    });
+    modern_window::with_ui(Kind::Settings, |ui| {
+        let old = std::mem::take(&mut ui.model.studio);
+        ui.model.studio = keep_preview(state, old);
+        ui.invalidate();
+    });
+}
+
+/// Show the previewed frame (source picture + its 1-bit result) in the editor; only those regions are repainted.
+pub fn set_studio_preview(source: Option<Image>, mono: &Bitmap) {
+    let pixels: Vec<bool> = mono.data.iter().collect();
+    with_bridge(|b| {
+        b.studio.source = source.clone();
+        b.studio.mono = pixels.clone();
+        b.studio.mono_w = mono.w;
+        b.studio.mono_h = mono.h;
+    });
+    if !modern_window::is_visible(Kind::Settings) {
+        return;
+    }
+    modern_window::with_ui(Kind::Settings, |ui| {
+        ui.model.studio.source = source;
+        ui.model.studio.mono = pixels;
+        ui.model.studio.mono_w = mono.w;
+        ui.model.studio.mono_h = mono.h;
+    });
+    modern_window::present_oled(Kind::Settings);
+}
+
 // ───────────────────────── events from the windows ─────────────────────────
 
 fn on_event(kind: Kind, event: UiEvent) {
@@ -411,6 +464,7 @@ fn on_event(kind: Kind, event: UiEvent) {
     }
     match (kind, event) {
         (Kind::Settings, UiEvent::Brightness(v)) => send(MenuEvent::SetBrightness(v)),
+        (Kind::Settings, UiEvent::Slider(id, v)) => send(MenuEvent::StudioSlider(id, v)),
         (Kind::Settings, UiEvent::ProfileSelected(row)) => {
             with_bridge(|b| b.selected = row);
         }
@@ -470,6 +524,10 @@ fn menu_event_for(id: u32) -> Option<MenuEvent> {
 fn settings_action(id: u32) {
     if let Some(event) = menu_event_for(id) {
         send(event);
+        return;
+    }
+    if ids::is_studio_action(id) {
+        send(MenuEvent::StudioAction(id));
         return;
     }
     match id {
@@ -779,6 +837,36 @@ fn editor_export() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn studio_ids_are_routed_to_the_studio_events_and_not_to_menu_events() {
+        // Every chip / toggle / button of the GIF Studio page is a studio action, none is a classic MenuEvent id.
+        for id in [
+            ids::STUDIO_OPEN, ids::STUDIO_SAVE, ids::STUDIO_EXPORT, ids::STUDIO_RESET, ids::STUDIO_FIT_CONTAIN, ids::STUDIO_FLIP_H,
+            ids::STUDIO_BG_WHITE, ids::STUDIO_INVERT, ids::STUDIO_DITHER_BASE + 4, ids::STUDIO_LOOP, ids::STUDIO_ROTATE_BASE + 3,
+        ] {
+            assert!(ids::is_studio_action(id), "{id}");
+            assert!(menu_event_for(id).is_none(), "{id} must not be a classic menu event");
+        }
+        // Sliders have their own event, the classic ids are not studio actions.
+        assert!(!ids::is_studio_action(ids::STUDIO_SLIDER_BASE));
+        for id in [ids::GIF_ADD, ids::GIF_TOGGLE, ids::BRIGHTNESS, ids::IDLE] {
+            assert!(!ids::is_studio_action(id), "{id}");
+        }
+    }
+
+    #[test]
+    fn the_snapshot_carries_the_studio_chips() {
+        let mut c = Config::default();
+        let snap = snapshot(&c);
+        assert!(snap.checked.contains(&ids::STUDIO_FIT_CONTAIN) && snap.checked.contains(&ids::STUDIO_LOOP));
+        c.animation_settings.dither = gxoled_studio::Dither::Atkinson;
+        c.animation_settings.flip_h = true;
+        let snap = snapshot(&c);
+        assert!(snap.checked.contains(&(ids::STUDIO_DITHER_BASE + 1)) && snap.checked.contains(&ids::STUDIO_FLIP_H));
+        assert!(!snap.checked.contains(&ids::STUDIO_DITHER_BASE));
+        assert_eq!(snap.checked, { let mut s = snap.checked.clone(); s.sort_unstable(); s }, "the list stays sorted");
+    }
 
     #[test]
     fn every_action_id_of_the_ui_is_mapped_or_handled_locally() {

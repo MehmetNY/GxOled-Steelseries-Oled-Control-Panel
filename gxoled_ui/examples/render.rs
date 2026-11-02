@@ -44,12 +44,43 @@ fn sample_qr() -> Image {
     Image { w: n, h: n, rgba }
 }
 
+fn sample_studio(lang: Lang) -> StudioModel {
+    let spec: [(i32, i32, i32, &str); 11] = [
+        (20, 300, 100, "1.00×"), (-64, 64, 0, "+0 px"), (-64, 64, 0, "+0 px"), (-100, 100, 15, "+15"), (-100, 100, 0, "+0"),
+        (10, 300, 100, "1.00"), (0, 255, 128, "128"), (10, 500, 100, "1.00×"), (10, 200, 30, "30 ms"), (0, 23, 0, "#1"), (0, 23, 23, "#24"),
+    ];
+    let (w, h) = (96u32, 64u32);
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h { for x in 0..w {
+        let i = ((y * w + x) * 4) as usize;
+        let d = (((x as f32 - 48.0).powi(2) + (y as f32 - 32.0).powi(2)).sqrt() / 40.0).min(1.0);
+        rgba[i] = (255.0 * (1.0 - d)) as u8; rgba[i + 1] = (180.0 * (1.0 - d)) as u8; rgba[i + 2] = (90.0 + 120.0 * d) as u8; rgba[i + 3] = 255;
+    } }
+    let mut mono = vec![false; 128 * 64];
+    for y in 0..64usize { for x in 0..128usize {
+        let d = (((x as f32 - 64.0).powi(2) + ((y as f32 - 32.0) * 1.3).powi(2)).sqrt()) / 38.0;
+        mono[y * 128 + x] = d < 1.0 && (x + y) % 2 == 0 || d < 0.6;
+    } }
+    StudioModel {
+        loaded: true,
+        name: "nyan-cat-final-v2.gif".into(),
+        info: if lang == Lang::Tr { "96×64 · 24 kare · 2,4 sn".into() } else { "96×64 · 24 frames · 2.4 s".into() },
+        sliders: spec.iter().enumerate().map(|(i, (min, max, value, text))| StudioSlider { id: ids::STUDIO_SLIDER_BASE + i as u32, min: *min, max: *max, value: *value, text: text.to_string() }).collect(),
+        source: Some(Image { w, h, rgba }),
+        mono, mono_w: 128, mono_h: 64,
+        status: if lang == Lang::Tr { "Dışa aktarıldı: nyan.gif".into() } else { "Exported nyan.gif".into() },
+        status_ok: true,
+    }
+}
+
 pub fn sample(lang: Lang, dark: bool, page: Page) -> UiModel {
     UiModel {
+        studio: sample_studio(lang),
         lang, dark, page,
         checked: vec![ids::MODE_WINDOW, ids::LANG_EN, if dark { ids::THEME_DARK } else { ids::THEME_LIGHT }, ids::STARTUP, ids::QUIT_SCREENSAVER,
             ids::UI_MODERN, ids::STYLE_ANALOG_ROUND, ids::TIME_24, ids::SHIFT_LOW, ids::BURN_OFF, ids::NOTIFY_ALWAYS,
-            ids::VOLUME_HOLD_BASE + 3, ids::MEDIA, ids::IDLE],
+            ids::VOLUME_HOLD_BASE + 3, ids::MEDIA, ids::IDLE,
+            ids::STUDIO_FIT_CONTAIN, ids::STUDIO_ROTATE_BASE, ids::STUDIO_BG_BLACK, ids::STUDIO_DITHER_BASE, ids::STUDIO_LOOP, ids::STUDIO_NORMALIZE],
         brightness: Some(7),
         profiles: ["Matrix Rain — Default", "Hyperspace — Default", "Star Wars Intro — Default", "Game of Life — Default", "matrix-001.json — matrix", "life-002.json — life"].iter().map(|s| s.to_string()).collect(),
         profile_selected: 1,

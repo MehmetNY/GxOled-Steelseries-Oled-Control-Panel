@@ -57,6 +57,31 @@ pub const GIF_ADD: u32 = 6060;
 pub const GIF_TOGGLE: u32 = 6061;
 pub const ANIM_STOP: u32 = 6062;
 
+// GIF Studio editor. Chips are radio groups / toggles in `UiModel::checked`; sliders live in `UiModel::studio`.
+pub const STUDIO_OPEN: u32 = 6100;
+pub const STUDIO_SAVE: u32 = 6101;
+pub const STUDIO_EXPORT: u32 = 6102;
+pub const STUDIO_RESET: u32 = 6103;
+pub const STUDIO_FIT_CONTAIN: u32 = 6110;
+pub const STUDIO_FIT_COVER: u32 = 6111;
+pub const STUDIO_FIT_STRETCH: u32 = 6112;
+/// 6115..=6118 = 0°, 90°, 180°, 270°.
+pub const STUDIO_ROTATE_BASE: u32 = 6115;
+pub const STUDIO_FLIP_H: u32 = 6120;
+pub const STUDIO_FLIP_V: u32 = 6121;
+pub const STUDIO_BG_BLACK: u32 = 6125;
+pub const STUDIO_BG_WHITE: u32 = 6126;
+pub const STUDIO_INPUT_INVERT: u32 = 6127;
+pub const STUDIO_NORMALIZE: u32 = 6128;
+pub const STUDIO_INVERT: u32 = 6129;
+/// 6130..=6134 = Floyd-Steinberg, Atkinson, Ordered, Threshold, None.
+pub const STUDIO_DITHER_BASE: u32 = 6130;
+pub const STUDIO_LOOP: u32 = 6140;
+/// One id per slider of `StudioModel::sliders`: `STUDIO_SLIDER_BASE + index`.
+pub const STUDIO_SLIDER_BASE: u32 = 6200;
+/// Number of studio sliders (zoom, shift x/y, brightness, contrast, gamma, threshold, speed, min frame, first/last frame).
+pub const STUDIO_SLIDER_COUNT: usize = 11;
+
 pub const EDITOR_SAVE: u32 = 401;
 pub const EDITOR_RESET: u32 = 402;
 pub const EDITOR_IMPORT: u32 = 403;
@@ -67,3 +92,8 @@ pub const EDITOR_FORMAT: u32 = 405;
 pub const NAV_BASE: u32 = 200;
 /// Profile list rows: `LIST_BASE + row`.
 pub const LIST_BASE: u32 = 7000;
+
+/// Chips, toggles and buttons of the GIF Studio editor (sliders have their own event).
+pub fn is_studio_action(id: u32) -> bool {
+    (STUDIO_OPEN..STUDIO_SLIDER_BASE).contains(&id)
+}

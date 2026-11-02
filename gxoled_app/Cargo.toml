@@ -13,6 +13,7 @@ sdl3-static = ["sdl3-sys/build-from-source-static"]
 [dependencies]
 gxoled_lib = { path = "../gxoled_lib" }
 gxoled_draw = { path = "../gxoled_draw" }
+gxoled_studio = { path = "../gxoled_studio" }
 
 anyhow = "1"
 chrono = "0.4"
