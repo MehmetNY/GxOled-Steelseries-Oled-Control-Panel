@@ -71,3 +71,7 @@ blitted nearest-neighbour. Repaints are event-driven; the OLED mirror updates on
 ## Third-party material
 
 See [`../THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md).
+
+## GIF Studio page (v0.6.0)
+
+The *GIF Studio* page contains the GIF editor described in [`GIF-STUDIO.md`](GIF-STUDIO.md). Its two previews (source and OLED result) are separate raster regions that are repainted on their own (`Ui::live_rects_px`), like the *Live OLED* mirror, so animating them does not re-render the page. The classic window has no editor; its GIF page still adds and starts/stops GIFs and says where the editor is.

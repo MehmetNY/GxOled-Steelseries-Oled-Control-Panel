@@ -8,7 +8,7 @@ Clock styles, burn-in mitigation, SteelClock-Go animations, GIF playback, bright
 </p>
 
 <p align="center">
-  <a href="https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases/tag/v0.5.3"><strong>Download GxOled Advanced v0.5.3</strong></a>
+  <a href="https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases/tag/v0.6.0"><strong>Download GxOled Advanced v0.6.0</strong></a>
   &nbsp;·&nbsp;
   <a href="#features">Features</a>
   &nbsp;·&nbsp;
@@ -17,14 +17,14 @@ Clock styles, burn-in mitigation, SteelClock-Go animations, GIF playback, bright
   <a href="#developers--ai-agents">Developer guide</a>
 </p>
 
-> **Current release:** v0.5.3 brings a completely redesigned **modern settings interface** (sidebar, cards, a live 128 × 64 OLED mirror, English/Türkçe, dark/light). The window scales as a whole when resized, the mirror shows what the base station shows (all five clock styles, running GIFs and animations), and the General page ends in a *Settings Summary*. The previous window is still inside the same EXE and can be chosen at any time — tray icon → *Settings window style*, *General → Settings window*, the *Modern UI* button of the classic window, or `--classic-ui` / `--modern-ui` ([`docs/MODERN-UI.md`](docs/MODERN-UI.md)). It also contains the v0.5.2 fix for the late return of GxOled after turning the DAC volume knob and the selectable volume-screen time (1–5 s). The GIF Studio page offers GIF selection and playback; a multi-layer GIF editor is **in development**, not part of this release. The application is unofficial and not affiliated with SteelSeries. Third-party licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+> **Current release:** v0.6.0 adds the **GIF Studio editor**: open a GIF, tune fit, rotation, zoom, brightness, contrast, gamma, threshold and one of five dither modes while two live previews show the source and the 1-bit OLED result, play it on the base station, and export or save it as a project ([`docs/GIF-STUDIO.md`](docs/GIF-STUDIO.md)). It is a single-GIF editor based on the processing model of [GGIF-Studio](https://github.com/D4rkTT/GGIF-Studio) (MIT); layers, text and a timeline are not in this version. The window now opens about 30 % smaller, and the right-hand OLED mirror shows a GIF only while it really plays (it appears on *Start* and disappears on *Stop*). The modern settings interface from v0.5.3 (sidebar, cards, live 128 × 64 mirror, English/Türkçe, dark/light, proportional scaling) remains the default; the classic window is still inside the same EXE — tray icon → *Settings window style*, *General → Settings window*, the *Modern UI* button of the classic window, or `--classic-ui` / `--modern-ui` ([`docs/MODERN-UI.md`](docs/MODERN-UI.md)). The application is unofficial and not affiliated with SteelSeries. Third-party licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Features
 
 - **Clock gallery** — digital standard/large, round/square analog, and Casio-inspired digital dial; a live 128 × 64 OLED preview.
 - **OLED burn-in mitigation** — an independent screen shifter plus clock-specific **Random Movements** and **No overlapping Pixels** modes. These distribute static pixel usage; they **do not guarantee** that burn-in cannot occur.
 - **SteelClock-Go animations** — **Matrix Rain**, **Hyperspace**, **Star Wars Intro**, and **Game of Life**, including editable/importable/exportable 128 × 64 JSON profiles. The original Go renderer runs as a helper; GxOled retains control of the USB/OLED connection.
-- **GIF playback & GIF Studio tab** — choose a GIF and start/stop its playback. A richer editor inspired by [GGIF-Studio](https://github.com/D4rkTT/GGIF-Studio) (timeline, layers, transforms, dithering) is planned and **not yet available** in v0.5.0.
+- **GIF Studio** — edit a GIF for the OLED: fit/rotate/mirror/zoom/shift, background, brightness/contrast/gamma/threshold/auto levels, Floyd–Steinberg, Atkinson, ordered, threshold or no dithering, speed, minimum frame time, trim and loop, with live source and OLED-result previews. Play it on the base station, save the settings as a project, export the result as a two-colour GIF. Processing model after [GGIF-Studio](https://github.com/D4rkTT/GGIF-Studio) (MIT); layers, text and a timeline are not included yet. Details: [`docs/GIF-STUDIO.md`](docs/GIF-STUDIO.md).
 - **Display & daily controls** — device brightness levels 1–10, idle screensaver/stock display behavior, native volume overlay cooperation with a selectable hold time (**Display → Volume screen time**, 1–5 s, default 2.5 s), and optional media information.
 - **Native Windows settings** — modern interface (default) or the classic window, dark/light, English/Türkçe, Tray/Window/Hybrid modes, optional Windows startup, and saved preferences.
 
@@ -47,7 +47,7 @@ The classic Windows layout (still selectable) is pictured above. More screenshot
 
 ## Get started
 
-1. Download the [**v0.5.3 Windows release**](https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases/tag/v0.5.3) (`GxOled.Advanced.v0.5.3.exe`; compare it with `SHA256SUMS.txt`).
+1. Download the [**v0.6.0 Windows release**](https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases/tag/v0.6.0) (`GxOled.Advanced.v0.6.0.exe`; compare it with `SHA256SUMS.txt`).
 2. Connect a supported **SteelSeries base station** over USB and run GxOled.
 3. Open **Settings** (using the tray icon or the configured window mode). Select **Clock**, **Animations**, **GIF Studio**, or **Display**.
 4. Use **Display → Clock burn-in protection** for clock movement, and **Display → OLED screen shift** for whole-screen shifting.
@@ -144,7 +144,7 @@ Preserve both profile-copy locations when you edit built-in defaults; `//go:embe
 
 OLED protection **reduces risk**, not panel wear. Avoid leaving static imagery at high brightness indefinitely.
 
-**GIF Studio in v0.5.0:** provides **Add GIF...** and **Start / Stop GIF** using the existing playback engine. It is not yet a layer editor, video editor, trim timeline, or image-compositing workflow. Keep development claims separate from release claims. The application already bounds image size, frame count and decoded pixels for safety.
+**GIF Studio in v0.6.0:** a single-GIF editor (crate `gxoled_studio`, page in `gxoled_ui`) with live previews, playback on the OLED, GIF export and project files — see [`docs/GIF-STUDIO.md`](docs/GIF-STUDIO.md). It is not yet a layer editor, text/video editor or draggable timeline. Keep development claims separate from release claims. The application bounds image size, frame count and decoded pixels for safety, and processes GIFs only through `gxoled_studio` (the classic window and the tray menu use the same pipeline).
 
 **Configuration:** on Windows settings normally reside at `%APPDATA%\GxOled\config.toml` and are persisted between launches. Keep backwards compatibility for existing serialized enum variants and stored paths. Windows startup registration belongs to the current user rather than a system-wide installation. Device brightness uses protocol steps 1–10, which are not calibrated percentages.
 

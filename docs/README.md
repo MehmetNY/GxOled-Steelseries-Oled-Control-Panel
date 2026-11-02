@@ -6,6 +6,7 @@ Everything that is not the product README lives here. Turkish guides are marked 
 | --- | --- |
 | [`BRANCHES-AND-RELEASES.md`](BRANCHES-AND-RELEASES.md) | Which branch/tag/release is what, how a release is made, what must not be touched. |
 | [`VOLUME_OSD_HANDOFF.md`](VOLUME_OSD_HANDOFF.md) | Why GxOled used to return 4–6 s after a knob turn, how v0.5.2 fixes it, what was ruled out. |
+| [`GIF-STUDIO.md`](GIF-STUDIO.md) | The GIF Studio editor (v0.6.0): every setting and its range, the processing order, project files, limits, what is not included, what is verified. |
 | [`MODERN-UI.md`](MODERN-UI.md) | The modern settings interface (v0.5.3): how to switch between it and the classic window, what is where, how the OLED mirror and window scaling work, what is verified. |
 | [`TR-WINDOWS-DERLEME.md`](TR-WINDOWS-DERLEME.md) **(TR)** | Building GxOled from source on Windows with `Validate-Windows.cmd`, incl. the "path too long" (FTK1011) failure. |
 | [`images/`](images/) | Screenshots and reference artwork used by the README and the clock designs. |

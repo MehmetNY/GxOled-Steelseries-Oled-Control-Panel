@@ -589,7 +589,7 @@ fn update_labels(buttons:&[(u32,usize)], language:ConfigLanguage) {
             710 => if tr {"GxOled kapanırken"}else{"When GxOled closes"},
             711 => if tr {"GIF oynatma"}else{"GIF playback"},
             718 => if tr {"GIF kitaplığı"}else{"GIF Library"},
-            719 => if tr {"128×64 GIF oynatma kontrolleri. Gelecek düzenleme araçları burada yer alacak."}else{"128×64 GIF playback controls. Future editing tools will live here."},
+            719 => if tr {"128×64 GIF oynatma kontrolleri. GIF düzenleyici (ton, dither, döndürme, dışa aktarma) modern pencerededir: Genel → Ayar penceresi."}else{"128×64 GIF playback controls. The GIF editor (tone, dither, rotation, export) is in the modern window: General → Settings window."},
             523 => if tr {"Yeni Profil boş bir JSON ile açılır. Geçerli bir şablon için Düzenleyicide Sıfırla kullanın."}else{"New Profile opens an empty JSON. Use Reset in the editor for a starter template."},
             712 => if tr {"OLED ekran kaydırma"}else{"OLED screen shift"},
             713 => if tr {"Saat yanık izi koruması"}else{"Clock burn-in protection"},
@@ -870,7 +870,7 @@ fn paint_panels(dc:Handle, s:&State,cw:i32,ch:i32){
         if s.page!=5 {
             draw_label(dc,"SteelSeries  •  128 x 64",
                 &Rect{left:p_x,top:346,right:cw-18,bottom:374},muted,false);
-            draw_label(dc,"GxOled Advanced v0.5.3",
+            draw_label(dc,"GxOled Advanced v0.6.0",
                 &Rect{left:p_x,top:395,right:cw-20,bottom:422},muted,false);
             rounded(dc,&Rect{left:p_x-4,top:458,right:cw-25,bottom:555},
                 if dark{color(30,35,43)}else{color(240,249,248)},border,16);

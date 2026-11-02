@@ -3,7 +3,7 @@
 mod os;
 #[cfg(target_os = "windows")]
 mod settings_window;
-// Modern settings windows (v0.5.3). `settings_window` (classic) stays available and is the automatic fallback.
+// Modern settings windows (v0.5.3), GIF Studio editor (v0.6.0). `settings_window` (classic) stays available and is the automatic fallback.
 #[cfg(target_os = "windows")]
 mod modern_window;
 #[cfg(target_os = "windows")]

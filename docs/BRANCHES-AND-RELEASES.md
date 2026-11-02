@@ -4,7 +4,8 @@
 
 | Tag | Release | Notes |
 | --- | --- | --- |
-| `v0.5.3` | GxOled Advanced v0.5.3 | Current. Modern settings interface (default) with the classic window still selectable; OLED mirror shows the real screen; proportional window scaling; *Settings Summary*. Assets: `GxOled.Advanced.v0.5.3.exe`, `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md`. |
+| `v0.6.0` | GxOled Advanced v0.6.0 | Current. GIF Studio editor (single GIF: geometry, tone, five dither modes, playback options, live previews, export, project files); settings window opens about 30 % smaller; the OLED mirror follows Start/Stop. Assets: `GxOled.Advanced.v0.6.0.exe`, `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md`. |
+| `v0.5.3` | GxOled Advanced v0.5.3 | Previous. Modern settings interface (default) with the classic window still selectable; OLED mirror shows the real screen; proportional window scaling; *Settings Summary*. Assets: `GxOled.Advanced.v0.5.3.exe`, `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md`. |
 | `v0.5.3-beta`, `v0.5.3-beta.2` | pre-releases | Trial builds of the modern interface that led to v0.5.3. Superseded; kept, not deleted. |
 | `v0.5.2` | GxOled Advanced v0.5.2 | Previous. Original-layout Advanced UI; fixes the late hand-back after a volume-knob turn and adds *Display → Volume screen time* (1–5 s). Asset: `GxOled.Advanced.v0.5.2.exe`, `SHA256SUMS.txt`. |
 | `v0.5.1` | GxOled Advanced v0.5.1 | Older. Known issue: GxOled returned 4–6 s after a knob turn (fixed in v0.5.2). |
@@ -19,7 +20,7 @@ Published `v*` releases and `stable` are never deleted, retagged or force-pushed
 | --- | --- |
 | `main` | Source of the latest release. |
 | `release/v<version>-advanced` | One per release; pushing it builds the Windows EXE (MSVC, `--locked`), records its SHA-256 and publishes the GitHub release (`.github/workflows/release.yml`). The workflow refuses to overwrite an existing release. |
-| `release/v0.5.0-advanced`, `release/v0.5.1-advanced`, `release/v0.5.2-advanced` | Source lines of those releases (references). |
+| `release/v0.5.0-advanced`, `release/v0.5.1-advanced`, `release/v0.5.2-advanced`, `release/v0.5.3-advanced` | Source lines of those releases (references). |
 | `release/v0.5.3-beta`, `release/v0.5.3-beta.2` | Source of the two trial pre-releases (the beta workflow was retired with v0.5.3). |
 | `fix/media-overlay-and-version-v050` | Older fix branch, already contained in `main`. |
 | `automation/republish-exact-v0.5.0` | CI that rebuilds and replaces v0.5.0 from user-provided source. Do not re-run casually. |
