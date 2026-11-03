@@ -624,6 +624,10 @@ fn gif_studio(c: &mut Ctx, l: &Layout, y: f32) -> f32 {
     let pane_h = (pane_w / 2.0).round();
     let card = Rect::new(l.lx, bottom, l.lw, 79.0 + 22.0 + pane_h + 24.0);
     let by = c.card(card, "monitor-play", Tone::Violet, c.t("Preview", "Önizleme"));
+    // Play / pause of both previews: a compact button in the header, on the right.
+    let (toggle_label, toggle_icon) = if c.m.studio.playing { (c.t("Pause", "Duraklat"), "pause") } else { (c.t("Play", "Oynat"), "play") };
+    let toggle_w = (c.eng.text_width(toggle_label, 15.0, 600, 0.0) + 22.0 + 30.0).max(104.0);
+    c.button(Rect::new(card.right() - 24.0 - toggle_w, card.y + 24.0, toggle_w, 35.0), ids::STUDIO_PREVIEW_TOGGLE, toggle_label, ButtonKind::Secondary, Some(toggle_icon));
     let up = |c: &Ctx, s: &str| c.lang().upper(s);
     let (src_cap, oled_cap) = (up(c, c.t("Source", "Kaynak")), up(c, c.t("OLED result", "OLED sonucu")));
     c.sc.text_mid(x, by - 4.0, &src_cap, &Text::new(12.0, 600, muted).spaced(1.5));

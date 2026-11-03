@@ -79,11 +79,16 @@ impl Source {
     /// Frame `index` shrunk to fit `max_w` × `max_h` (straight alpha RGBA) for the editor's "source" pane.
     pub fn thumbnail(&self, index: usize, max_w: u32, max_h: u32) -> Option<(u32, u32, Vec<u8>)> {
         let f = self.frames.get(index)?;
-        let img = image::RgbaImage::from_raw(self.w as u32, self.h as u32, f.rgba.clone())?;
+        // Borrows the stored frame: this runs for every frame of the preview and must not copy half a megabyte.
+        let img = image::ImageBuffer::<image::Rgba<u8>, &[u8]>::from_raw(self.w as u32, self.h as u32, f.rgba.as_slice())?;
         let k = (max_w as f32 / self.w as f32).min(max_h as f32 / self.h as f32).min(1.0);
         let (tw, th) = (((self.w as f32 * k).round() as u32).max(1), ((self.h as f32 * k).round() as u32).max(1));
-        let img = if (tw, th) == (img.width(), img.height()) { img } else { image::imageops::resize(&img, tw, th, FilterType::Triangle) };
-        Some((tw, th, img.into_raw()))
+        let pixels = if (tw, th) == (img.width(), img.height()) {
+            f.rgba.clone()
+        } else {
+            image::imageops::resize(&img, tw, th, FilterType::Triangle).into_raw()
+        };
+        Some((tw, th, pixels))
     }
 }
 

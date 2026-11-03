@@ -315,6 +315,14 @@ impl Ui {
         Some(Frame { width: base.width(), height: base.height(), rgba: &self.frame })
     }
 
+    /// Give the pixel buffers back (the window is hidden): the cached SVG pass and the composited frame are
+    /// several megabytes at a large window or high DPI. The next [`Ui::frame`] renders them again.
+    pub fn release_buffers(&mut self) {
+        self.base = None;
+        self.frame = Vec::new();
+        self.dirty = true;
+    }
+
     /// Forget a press that will never see its button-up (capture lost, window deactivated).
     pub fn cancel_press(&mut self) {
         if self.pressed.is_some() || self.drag.is_some() {

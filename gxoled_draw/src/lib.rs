@@ -335,6 +335,19 @@ struct DrawLayerState {
     layer: DrawLayer,
     anim: AnimState,
     scroll: ScrollState,
+    /// The clock bitmap of the second that was drawn last (a clock only changes once a second).
+    clock_cache: Option<(ClockKey, Bitmap)>,
+}
+
+/// Everything the picture of a clock depends on: its settings and the second.
+type ClockKey = (ClockStyle, bool, bool, bool, i64);
+
+/// The cached bitmap for `key`; `render` runs only when the key changed.
+fn cached_clock(cache: &mut Option<(ClockKey, Bitmap)>, key: ClockKey, render: impl FnOnce() -> Bitmap) -> &Bitmap {
+    if cache.as_ref().is_none_or(|(k, _)| *k != key) {
+        *cache = Some((key, render()));
+    }
+    &cache.as_ref().expect("filled above").1
 }
 
 const OLED_SHIFT_PERIOD: Duration = Duration::from_secs(90);
@@ -547,14 +560,17 @@ fn run_draw_device_thread(
                         turkish,
                     } => {
                         let texter = texter.lock();
-                        blit_clock(
+                        let now = Local::now();
+                        let key = (*style, *twelve_hour, *media_visible, *turkish, now.timestamp());
+                        let bitmap = cached_clock(&mut state.clock_cache, key, || {
+                            render_clock_bitmap(&texter, *style, *twelve_hour, *media_visible, *turkish, now)
+                        });
+                        place_clock(
                             &mut screen,
                             &texter,
                             *style,
-                            *twelve_hour,
                             *media_visible,
-                            *turkish,
-                            Local::now(),
+                            bitmap,
                             (*x_offset, *y_offset),
                             (shift_x, shift_y),
                         );
@@ -630,7 +646,12 @@ fn run_draw_device_thread(
         // Delay as long as needed based on how long frame rendering took (which will mostly depend on USB speed)
         let frame_duration = Instant::now().duration_since(time);
         // println!("frame: {:?}, {:?}", frame_duration, frame_delay);
-        spin_sleep::sleep(frame_delay.saturating_sub(frame_duration));
+        // A plain (high-resolution) sleep: `spin_sleep::sleep` would busy-wait the last ~0.7 ms of every frame on
+        // Windows, which is about 2 % of a core around the clock for nothing a 30 fps display could show.
+        let rest = frame_delay.saturating_sub(frame_duration);
+        if !rest.is_zero() {
+            spin_sleep::native_sleep(rest);
+        }
     }
     dev
 }
@@ -794,8 +815,21 @@ fn blit_clock(
     offset: (isize, isize),
     shift: (isize, isize),
 ) {
-    let (width, height) = (screen.w, screen.h);
     let bitmap = render_clock_bitmap(texter, style, twelve_hour, media_visible, turkish, now);
+    place_clock(screen, texter, style, media_visible, &bitmap, offset, shift);
+}
+
+/// Put an already rendered clock bitmap where its style belongs on `screen`.
+fn place_clock(
+    screen: &mut Bitmap,
+    texter: &TextRenderer,
+    style: ClockStyle,
+    media_visible: bool,
+    bitmap: &Bitmap,
+    offset: (isize, isize),
+    shift: (isize, isize),
+) {
+    let (width, height) = (screen.w, screen.h);
     let base_x = if bitmap.w >= width { 0 } else { (width as isize - bitmap.w as isize) / 2 };
     let x = base_x + offset.0;
     let y = match style {
@@ -806,7 +840,7 @@ fn blit_clock(
         ClockStyle::CasioF91W => 0,
         ClockStyle::DigitalBold => (height as isize - texter.line_height_at_size(texter.size() * 1.48) as isize) / 2,
     } + offset.1;
-    screen.blit(&bitmap, x + shift.0, y + shift.1, false);
+    screen.blit(bitmap, x + shift.0, y + shift.1, false);
 }
 
 /// A full `width` x `height` screen showing only the clock, placed exactly like the render thread places it.
@@ -986,6 +1020,7 @@ impl DrawDevice {
                     timing_initialized: false,
                 },
                 scroll: ScrollState { x: 0 },
+                clock_cache: None,
             },
         );
         id
@@ -1006,6 +1041,7 @@ impl DrawDevice {
             state.anim.next_update = Instant::now();
             state.anim.timing_initialized = false;
             state.scroll.x = 0;
+            state.clock_cache = None;
             Ok(())
         } else {
             Err(layer)
@@ -1037,6 +1073,10 @@ impl DrawDevice {
     }
     pub fn set_text_renderer(&mut self, texter: TextRenderer) {
         *self.texter.lock() = texter;
+        // Clocks drawn with the previous font must be drawn again.
+        for state in self.layers.lock().values_mut() {
+            state.clock_cache = None;
+        }
     }
     /// Return the OLED dimensions in pixels.
     pub fn dimensions(&self) -> (usize, usize) {
@@ -1382,5 +1422,61 @@ mod animation_tests {
         let mut s = state(t0);
         update_animation_timing(&mut s, &[], t0, false);
         assert_eq!(s.ticks, 0);
+    }
+}
+
+#[cfg(test)]
+mod clock_cache_tests {
+    use super::*;
+
+    fn key(second: i64) -> ClockKey {
+        (ClockStyle::DigitalOriginal, false, false, false, second)
+    }
+
+    #[test]
+    fn a_clock_is_drawn_once_per_second_not_once_per_frame() {
+        let mut cache = None;
+        let mut renders = 0;
+        for _frame in 0..30 {
+            cached_clock(&mut cache, key(100), || {
+                renders += 1;
+                Bitmap::new(4, 4, false)
+            });
+        }
+        assert_eq!(renders, 1, "30 frames of the same second share one bitmap");
+        cached_clock(&mut cache, key(101), || {
+            renders += 1;
+            Bitmap::new(4, 4, true)
+        });
+        assert_eq!(renders, 2, "the next second is drawn again");
+    }
+
+    #[test]
+    fn a_changed_setting_is_never_served_from_the_cache() {
+        let mut cache = None;
+        let first = cached_clock(&mut cache, key(5), || Bitmap::new(2, 2, false)).clone();
+        let other = (ClockStyle::AnalogRound, false, false, false, 5);
+        let second = cached_clock(&mut cache, other, || Bitmap::new(3, 3, true)).clone();
+        assert_ne!(first, second);
+        let twelve = (ClockStyle::AnalogRound, true, false, false, 5);
+        let third = cached_clock(&mut cache, twelve, || Bitmap::new(5, 5, false)).clone();
+        assert_eq!((third.w, third.h), (5, 5));
+    }
+
+    #[test]
+    fn the_cached_bitmap_is_what_a_fresh_render_would_give() {
+        let texter = TextRenderer::new_pixel_operator();
+        let now = Local::now();
+        let fresh = render_clock_bitmap(&texter, ClockStyle::DigitalBold, false, false, false, now);
+        let mut cache = None;
+        let key = (ClockStyle::DigitalBold, false, false, false, now.timestamp());
+        let cached = cached_clock(&mut cache, key, || render_clock_bitmap(&texter, ClockStyle::DigitalBold, false, false, false, now));
+        assert_eq!(*cached, fresh);
+        // Placing a cached bitmap is the same as drawing the clock directly.
+        let mut a = Bitmap::new(128, 64, false);
+        let mut b = Bitmap::new(128, 64, false);
+        blit_clock(&mut a, &texter, ClockStyle::DigitalBold, false, false, false, now, (3, 1), (1, 0));
+        place_clock(&mut b, &texter, ClockStyle::DigitalBold, false, cached, (3, 1), (1, 0));
+        assert_eq!(a, b);
     }
 }

@@ -650,6 +650,31 @@ struct ClockPosition {
 /// The OLED's size; the studio renders for this until a device reports another one.
 const SCREEN_DIMS: (usize, usize) = (128, 64);
 
+/// How long the main loop rests between two passes. It runs fast (10 ms) while something needs it: a settings
+/// window that has to answer the mouse, a Go animation whose frames it forwards, a GIF re-render that is due.
+/// Otherwise it wakes every 50 ms, or at the next full second at the latest (the OLED clock changes then), so a
+/// tray application that nobody looks at does not wake 100 times a second.
+fn loop_pause(busy: bool, subsec_millis: u32) -> Duration {
+    const BUSY_MS: u64 = 10;
+    const IDLE_MS: u64 = 50;
+    if busy {
+        return Duration::from_millis(BUSY_MS);
+    }
+    // +1 ms so the second has really changed when the loop wakes up.
+    let to_next_second = (1001u64).saturating_sub(u64::from(subsec_millis.min(999))).max(1);
+    Duration::from_millis(IDLE_MS.min(to_next_second))
+}
+
+/// Ask Windows to take the pages this process does not need right now out of its working set. They are not freed
+/// or lost: whatever is touched again is faulted back in, so it costs nothing but a moment. It makes the
+/// application's "Memory" figure in the Task Manager show what it really needs while it sits in the tray.
+#[cfg(target_os = "windows")]
+fn trim_working_set() {
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, SetProcessWorkingSetSize};
+    // (SIZE_T)-1 for both limits is the documented way to empty the working set.
+    unsafe { SetProcessWorkingSetSize(GetCurrentProcess(), usize::MAX, usize::MAX) };
+}
+
 /// Every frame of the animation that plays, ready for the draw thread.
 fn studio_frames(studio: &mut gxoled_studio::Studio) -> Vec<gxoled_draw::Frame> {
     studio
@@ -659,8 +684,9 @@ fn studio_frames(studio: &mut gxoled_studio::Studio) -> Vec<gxoled_draw::Frame> 
         .collect()
 }
 
-/// The GIF being edited / played. It is decoded on demand and dropped again after a while, so a GIF that is
-/// neither playing nor open in the editor does not keep its decoded frames in memory.
+/// The GIF being edited / played. It is decoded on demand and dropped again soon after it was last used, so a GIF
+/// that is neither being edited nor being (re)rendered does not keep its decoded frames (easily tens of megabytes)
+/// in memory. The frames that play on the OLED are only 1 kB each and live in the render thread.
 struct StudioSlot {
     studio: Option<gxoled_studio::Studio>,
     /// A file that failed to load; not retried until the configured path changes.
@@ -669,7 +695,7 @@ struct StudioSlot {
 }
 
 impl StudioSlot {
-    const IDLE_RELEASE: Duration = Duration::from_secs(30);
+    const IDLE_RELEASE: Duration = Duration::from_secs(10);
 
     fn new() -> Self {
         Self { studio: None, failed: None, last_used: Instant::now() }
@@ -710,10 +736,20 @@ impl StudioSlot {
         self.studio = Some(studio);
     }
 
-    fn release_if_idle(&mut self) {
-        if self.studio.is_some() && self.last_used.elapsed() >= Self::IDLE_RELEASE {
-            self.studio = None;
-        }
+    /// Keep the decoded GIF for another while without using it (the editor page is open but nothing changes).
+    #[cfg(target_os = "windows")]
+    fn touch(&mut self) {
+        self.last_used = Instant::now();
+    }
+
+    /// Drop the decoded GIF now. `true` if there was one.
+    fn release(&mut self) -> bool {
+        self.studio.take().is_some()
+    }
+
+    /// Drop the decoded GIF when it has not been used for a while. `true` if that freed it.
+    fn release_if_idle(&mut self) -> bool {
+        self.studio.is_some() && self.last_used.elapsed() >= Self::IDLE_RELEASE && self.release()
     }
 }
 
@@ -729,16 +765,43 @@ struct StudioUi {
     dirty: bool,
     status: Option<(String, bool)>,
     was_visible: bool,
-    started: Instant,
+    /// Position of the previews; paused by the button and while the page is out of sight.
+    clock: gxoled_studio::PreviewClock,
     last_pushed: Option<(usize, u64)>,
     /// Bumped on every settings change so the preview is redrawn even if the frame index stays the same.
     generation: u64,
+    /// The playback plan of `generation` (it only changes with the settings) and the length of one pass.
+    plan: Vec<gxoled_studio::plan::Step>,
+    plan_total_ms: u64,
+    plan_generation: Option<u64>,
 }
 
 #[cfg(target_os = "windows")]
 impl StudioUi {
     fn new() -> Self {
-        Self { dirty: true, status: None, was_visible: false, started: Instant::now(), last_pushed: None, generation: 0 }
+        Self {
+            dirty: true,
+            status: None,
+            was_visible: false,
+            clock: gxoled_studio::PreviewClock::started(Instant::now()),
+            last_pushed: None,
+            generation: 0,
+            plan: Vec::new(),
+            plan_total_ms: 0,
+            plan_generation: None,
+        }
+    }
+
+    /// A different GIF was opened: its previews start playing again.
+    fn new_gif(&mut self) {
+        self.clock.restart(Instant::now());
+        self.changed();
+    }
+
+    /// The play / pause button.
+    fn toggle_preview(&mut self) {
+        self.clock.toggle(Instant::now());
+        self.dirty = true; // the button's caption follows
     }
 
     fn changed(&mut self) {
@@ -756,15 +819,25 @@ impl StudioUi {
 /// Keeps the GIF Studio page current: pushes its controls when they changed and animates the two previews.
 #[cfg(target_os = "windows")]
 fn studio_ui_tick(st: &mut StudioUi, slot: &mut StudioSlot, config: &Config, dims: (usize, usize)) {
+    let now = Instant::now();
     if !settings_ui::studio_page_visible() {
-        st.was_visible = false;
+        if st.was_visible {
+            // Window closed or another page selected: the clock stops, nothing is rendered for the previews.
+            st.was_visible = false;
+            st.clock.suspend(now);
+        }
         return;
     }
     if !st.was_visible {
         st.was_visible = true;
         st.dirty = true;
-        st.started = Instant::now();
+        st.clock.resume(now);
         st.last_pushed = None;
+    }
+    // A paused preview that has not changed has nothing to do; the decoded GIF is only kept for the sliders.
+    if !st.clock.playing() && !st.dirty && st.last_pushed.is_some() {
+        slot.touch();
+        return;
     }
     let lang = if config.language == ConfigLanguage::Turkish { gxoled_ui::model::Lang::Tr } else { gxoled_ui::model::Lang::En };
     let status = st.status.clone();
@@ -782,19 +855,24 @@ fn studio_ui_tick(st: &mut StudioUi, slot: &mut StudioSlot, config: &Config, dim
         return;
     };
     if st.dirty {
-        settings_ui::set_studio_state(gxoled_ui::studio_bind::model(studio, lang, status));
+        let mut model = gxoled_ui::studio_bind::model(studio, lang, status);
+        model.playing = st.clock.playing();
+        settings_ui::set_studio_state(model);
         st.dirty = false;
         st.last_pushed = None;
     }
-    let plan = studio.plan();
-    let total: u64 = plan.iter().map(|s| s.delay_ms as u64).sum();
-    let mut elapsed = st.started.elapsed().as_millis() as u64;
-    if !studio.settings().looping && elapsed >= total + 1000 {
-        st.started = Instant::now(); // a play-once GIF replays in the preview after a short hold
+    if st.plan_generation != Some(st.generation) {
+        st.plan = studio.plan();
+        st.plan_total_ms = st.plan.iter().map(|s| s.delay_ms as u64).sum();
+        st.plan_generation = Some(st.generation);
+    }
+    let mut elapsed = st.clock.elapsed_ms(now);
+    if !studio.settings().looping && elapsed >= st.plan_total_ms + 1000 {
+        st.clock.rewind(now); // a play-once GIF replays in the preview after a short hold
         elapsed = 0;
     }
-    let Some(step) = gxoled_studio::Studio::step_at(&plan, elapsed, studio.settings().looping) else { return };
-    let index = plan[step].index;
+    let Some(step) = gxoled_studio::Studio::step_at(&st.plan, elapsed, studio.settings().looping) else { return };
+    let index = st.plan[step].index;
     if st.last_pushed == Some((index, st.generation)) {
         return;
     }
@@ -1741,6 +1819,13 @@ fn main() {
     let mut clock_offset: (isize, isize) = (0, 0);
     let mut last_clock_rect: Option<ClockRect> = None;
 
+    // Idle memory: the working set is trimmed once start-up is over, and again whenever the settings window went
+    // away or a decoded GIF was dropped (see `trim_working_set`).
+    #[cfg(target_os = "windows")]
+    let mut trim_due: Option<Instant> = Some(Instant::now() + Duration::from_secs(5));
+    #[cfg(target_os = "windows")]
+    let mut ui_was_active = false;
+
     // Wait for connect
     let mut last_connect = Instant::now() - Duration::from_secs(1);
     let dev = loop {
@@ -1815,7 +1900,19 @@ fn main() {
                 break d;
             }
         }
-        sleep(Duration::from_millis(10));
+        #[cfg(target_os = "windows")]
+        {
+            let active = settings_ui::ui_active();
+            if trim_due.is_some_and(|due| Instant::now() >= due) {
+                trim_due = None;
+                if !active {
+                    trim_working_set();
+                }
+            }
+            sleep(loop_pause(active, 0));
+        }
+        #[cfg(not(target_os = "windows"))]
+        sleep(loop_pause(false, 0));
     };
     unsafe { sdl::SDL_SetTrayIcon(tray, icon.surf) };
     #[cfg(target_os = "windows")]
@@ -1995,6 +2092,7 @@ fn main() {
                             format!("{name_stem}-oled.gif"),
                             say(&config, "Export as GIF", "GIF olarak dışa aktar").to_owned(),
                         ),
+                        ui_ids::STUDIO_PREVIEW_TOGGLE => studio_ui.toggle_preview(),
                         _ => {
                             if let Some(studio) = studio_slot.get(&config, dev.dimensions()) {
                                 if id == ui_ids::STUDIO_RESET {
@@ -2218,7 +2316,7 @@ fn main() {
                             }
                             #[cfg(target_os = "windows")]
                             {
-                                studio_ui.changed();
+                                studio_ui.new_gif();
                                 studio_apply_due = None;
                                 preview_gif = None;
                             }
@@ -2325,7 +2423,12 @@ fn main() {
                 }
             }
         }
-        studio_slot.release_if_idle();
+        if studio_slot.release_if_idle() {
+            #[cfg(target_os = "windows")]
+            {
+                trim_due = Some(Instant::now() + Duration::from_secs(1));
+            }
+        }
         if config_updated {
             save_config(&config);
         }
@@ -2631,38 +2734,69 @@ fn main() {
         //  3. without a device frame (not connected, or the base station shows its own volume screen): what the
         //     configured GIF / clock would look like (a preview).
         #[cfg(target_os = "windows")]
-        if last_preview_tick.elapsed() >= Duration::from_millis(40) || force_redraw {
-            last_preview_tick = Instant::now();
-            let (screen_w, screen_h) = dev.dimensions();
-            studio_ui_tick(&mut studio_ui, &mut studio_slot, &config, (screen_w, screen_h));
-            let gif_path = config.animation_path.clone();
-            let gif_wanted = config.animation_playing && gif_path.is_some();
-            if !gif_wanted || preview_gif.as_ref().is_some_and(|(p, _)| Some(p) != gif_path.as_ref()) {
-                preview_gif = None; // drop the decoded frames once they are not needed (or the file changed)
+        {
+            // The mirror and the editor previews are only computed while a settings window is on screen.
+            let ui_active = settings_ui::ui_active();
+            if ui_active != ui_was_active {
+                ui_was_active = ui_active;
+                last_preview = None; // drawn afresh when a window appears
+                if ui_active {
+                    last_preview_tick = Instant::now() - Duration::from_secs(1);
+                } else {
+                    // The window went away: the editor's preview clock stops, and what only the windows needed
+                    // (decoded GIF, preview frames, pixel buffers) is dropped.
+                    let (screen_w, screen_h) = dev.dimensions();
+                    studio_ui_tick(&mut studio_ui, &mut studio_slot, &config, (screen_w, screen_h));
+                    preview_gif = None;
+                    if studio_apply_due.is_none() {
+                        studio_slot.release();
+                    }
+                    trim_due = Some(Instant::now() + Duration::from_secs(2));
+                }
             }
-            let (frame, live): (Bitmap, bool) = if let Some(frame) = &go_frame {
-                ((**frame).clone(), oled_available)
-            } else if let Some(frame) = dev.latest_frame(Duration::from_millis(1500)) {
-                (frame, true)
-            } else if gif_wanted {
-                (gif_preview_screen(&mut preview_gif, &mut studio_slot, &config, screen_w, screen_h), false)
-            } else if config.time_mode != ConfigTimeMode::Off && config.go_animation.is_none() {
-                let clock = dev.clock_screen(
-                    config.clock_style.to_draw(),
-                    config.time_mode == ConfigTimeMode::H12,
-                    config.language == ConfigLanguage::Turkish,
-                    clock_offset,
-                );
-                (clock, false)
-            } else {
-                (Bitmap::new(screen_w, screen_h, false), false)
-            };
-            if last_preview.as_ref().is_none_or(|(old, was_live)| *old != frame || *was_live != live) {
-                settings_ui::preview(&frame, live);
-                last_preview = Some((frame, live));
+            if trim_due.is_some_and(|due| Instant::now() >= due) {
+                trim_due = None;
+                if !ui_active {
+                    trim_working_set();
+                }
+            }
+            if ui_active && (last_preview_tick.elapsed() >= Duration::from_millis(40) || force_redraw) {
+                last_preview_tick = Instant::now();
+                let (screen_w, screen_h) = dev.dimensions();
+                studio_ui_tick(&mut studio_ui, &mut studio_slot, &config, (screen_w, screen_h));
+                let gif_path = config.animation_path.clone();
+                let gif_wanted = config.animation_playing && gif_path.is_some();
+                if !gif_wanted || preview_gif.as_ref().is_some_and(|(p, _)| Some(p) != gif_path.as_ref()) {
+                    preview_gif = None; // drop the decoded frames once they are not needed (or the file changed)
+                }
+                let (frame, live): (Bitmap, bool) = if let Some(frame) = &go_frame {
+                    ((**frame).clone(), oled_available)
+                } else if let Some(frame) = dev.latest_frame(Duration::from_millis(1500)) {
+                    (frame, true)
+                } else if gif_wanted {
+                    (gif_preview_screen(&mut preview_gif, &mut studio_slot, &config, screen_w, screen_h), false)
+                } else if config.time_mode != ConfigTimeMode::Off && config.go_animation.is_none() {
+                    let clock = dev.clock_screen(
+                        config.clock_style.to_draw(),
+                        config.time_mode == ConfigTimeMode::H12,
+                        config.language == ConfigLanguage::Turkish,
+                        clock_offset,
+                    );
+                    (clock, false)
+                } else {
+                    (Bitmap::new(screen_w, screen_h, false), false)
+                };
+                if last_preview.as_ref().is_none_or(|(old, was_live)| *old != frame || *was_live != live) {
+                    settings_ui::preview(&frame, live);
+                    last_preview = Some((frame, live));
+                }
             }
         }
-        sleep(Duration::from_millis(10));
+        #[cfg(target_os = "windows")]
+        let busy = ui_was_active || go_runner.is_some() || studio_apply_due.is_some();
+        #[cfg(not(target_os = "windows"))]
+        let busy = false;
+        sleep(loop_pause(busy, Local::now().timestamp_subsec_millis()));
     }
     #[cfg(target_os = "windows")]
     drop(go_runner);
@@ -2873,5 +3007,42 @@ mod gif_studio_tests {
         // It simply loads again when needed.
         assert!(slot.get(&config, SCREEN_DIMS).is_some());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod loop_pause_tests {
+    use super::loop_pause;
+    use std::time::Duration;
+
+    #[test]
+    fn a_busy_loop_runs_at_ten_milliseconds() {
+        for subsec in [0, 500, 999] {
+            assert_eq!(loop_pause(true, subsec), Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn an_idle_loop_wakes_at_fifty_milliseconds() {
+        assert_eq!(loop_pause(false, 0), Duration::from_millis(50));
+        assert_eq!(loop_pause(false, 100), Duration::from_millis(50));
+        assert_eq!(loop_pause(false, 940), Duration::from_millis(50));
+    }
+
+    #[test]
+    fn an_idle_loop_never_sleeps_through_the_start_of_a_second() {
+        // 20 ms before the next full second it wakes 21 ms later (the +1 ms makes sure the second has changed).
+        assert_eq!(loop_pause(false, 980), Duration::from_millis(21));
+        assert_eq!(loop_pause(false, 999), Duration::from_millis(2));
+        // Never zero, even for an odd clock reading.
+        assert!(loop_pause(false, 5000) >= Duration::from_millis(1));
+        // Every pass of an idle loop reaches the next second within one extra pass: wake-ups are at most 50 ms apart.
+        let mut t = 0u64;
+        let mut wakeups = 0;
+        while t < 1000 {
+            t += loop_pause(false, (t % 1000) as u32).as_millis() as u64;
+            wakeups += 1;
+        }
+        assert!((20..=22).contains(&wakeups), "{wakeups} wake-ups per second");
     }
 }

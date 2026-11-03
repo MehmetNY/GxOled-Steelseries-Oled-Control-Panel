@@ -261,6 +261,15 @@ fn rgba_to_bgra(src: &[u8], dst: &mut Vec<u8>) {
 }
 
 impl Win {
+    /// The window was hidden: hand the pixel buffers back (the SVG pass, the composited frame and the BGRA copy are
+    /// three window-sized bitmaps). `show` renders again before the window reappears.
+    fn release_buffers(&mut self) {
+        self.bgra = Vec::new();
+        self.frame_w = 0;
+        self.frame_h = 0;
+        self.ui.release_buffers();
+    }
+
     /// Render if needed and refresh the BGRA copy the paint handler blits.
     fn ensure_frame(&mut self) {
         if self.ui.needs_render() || self.bgra.is_empty() {
@@ -416,6 +425,12 @@ unsafe fn handle(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             }
         }
         WM_ERASEBKGND => return 1,
+        WM_SHOWWINDOW => {
+            // wp = 0: the window is being hidden; lp = 0: by a ShowWindow call (not because of an owner or minimise).
+            if wp == 0 && lp == 0 {
+                with_win(hwnd, |w| w.release_buffers());
+            }
+        }
         WM_GETMINMAXINFO => {
             if let Some(c) = cell(hwnd) {
                 if let Ok(w) = c.try_borrow() {

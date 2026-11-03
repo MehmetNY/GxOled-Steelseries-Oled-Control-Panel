@@ -437,23 +437,26 @@ pub fn set_studio_state(state: StudioModel) {
 
 /// Show the previewed frame (source picture + its 1-bit result) in the editor; only those regions are repainted.
 pub fn set_studio_preview(source: Option<Image>, mono: &Bitmap) {
-    let pixels: Vec<bool> = mono.data.iter().collect();
-    with_bridge(|b| {
-        b.studio.source = source.clone();
-        b.studio.mono = pixels.clone();
-        b.studio.mono_w = mono.w;
-        b.studio.mono_h = mono.h;
-    });
+    // Only called while the page is on screen, so the window's own model is the one that matters: no second copy
+    // of the picture is kept in the bridge (a new window is built from the editor state alone), and the pixel
+    // buffer of the previous frame is reused.
     if !modern_window::is_visible(Kind::Settings) {
         return;
     }
     modern_window::with_ui(Kind::Settings, |ui| {
-        ui.model.studio.source = source;
-        ui.model.studio.mono = pixels;
-        ui.model.studio.mono_w = mono.w;
-        ui.model.studio.mono_h = mono.h;
+        let st = &mut ui.model.studio;
+        st.source = source;
+        st.mono.clear();
+        st.mono.extend(mono.data.iter());
+        st.mono_w = mono.w;
+        st.mono_h = mono.h;
     });
     modern_window::present_oled(Kind::Settings);
+}
+
+/// `true` while any modern window (settings or profile editor) is on screen.
+pub fn any_visible() -> bool {
+    modern_window::is_visible(Kind::Settings) || modern_window::is_visible(Kind::Editor)
 }
 
 // ───────────────────────── events from the windows ─────────────────────────
@@ -842,7 +845,7 @@ mod tests {
     fn studio_ids_are_routed_to_the_studio_events_and_not_to_menu_events() {
         // Every chip / toggle / button of the GIF Studio page is a studio action, none is a classic MenuEvent id.
         for id in [
-            ids::STUDIO_OPEN, ids::STUDIO_SAVE, ids::STUDIO_EXPORT, ids::STUDIO_RESET, ids::STUDIO_FIT_CONTAIN, ids::STUDIO_FLIP_H,
+            ids::STUDIO_OPEN, ids::STUDIO_SAVE, ids::STUDIO_EXPORT, ids::STUDIO_RESET, ids::STUDIO_PREVIEW_TOGGLE, ids::STUDIO_FIT_CONTAIN, ids::STUDIO_FLIP_H,
             ids::STUDIO_BG_WHITE, ids::STUDIO_INVERT, ids::STUDIO_DITHER_BASE + 4, ids::STUDIO_LOOP, ids::STUDIO_ROTATE_BASE + 3,
         ] {
             assert!(ids::is_studio_action(id), "{id}");

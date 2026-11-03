@@ -62,6 +62,8 @@ pub const STUDIO_OPEN: u32 = 6100;
 pub const STUDIO_SAVE: u32 = 6101;
 pub const STUDIO_EXPORT: u32 = 6102;
 pub const STUDIO_RESET: u32 = 6103;
+/// Play / pause of the editor's previews.
+pub const STUDIO_PREVIEW_TOGGLE: u32 = 6104;
 pub const STUDIO_FIT_CONTAIN: u32 = 6110;
 pub const STUDIO_FIT_COVER: u32 = 6111;
 pub const STUDIO_FIT_STRETCH: u32 = 6112;

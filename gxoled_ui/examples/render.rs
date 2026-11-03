@@ -69,6 +69,7 @@ fn sample_studio(lang: Lang) -> StudioModel {
         source: Some(Image { w, h, rgba }),
         mono, mono_w: 128, mono_h: 64,
         status: if lang == Lang::Tr { "Dışa aktarıldı: nyan.gif".into() } else { "Exported nyan.gif".into() },
+        playing: std::env::var_os("PAUSED").is_none(), // PAUSED=1 shows the play button instead of pause
         status_ok: true,
     }
 }

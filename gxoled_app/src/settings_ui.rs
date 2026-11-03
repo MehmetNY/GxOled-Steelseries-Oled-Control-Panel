@@ -145,6 +145,12 @@ pub fn preview(bitmap: &Bitmap, live: bool) {
     guarded(|| modern_ui::preview(bitmap, live));
 }
 
+/// `true` while any settings or profile-editor window (classic or modern) is on screen. The application only
+/// computes the OLED mirror, and only polls quickly, while this is true.
+pub fn ui_active() -> bool {
+    classic::any_visible() || guarded(modern_ui::any_visible).unwrap_or(false)
+}
+
 /// `true` while the modern settings window shows the GIF Studio page (the classic window has no editor).
 pub fn studio_page_visible() -> bool {
     guarded(modern_ui::studio_page_visible).unwrap_or(false)

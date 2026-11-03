@@ -10,15 +10,22 @@ the only OLED writer.
 ## Using it
 
 1. **Add GIF…** (or *Open project…*). The page shows the file name, size, frame count and duration.
-2. Two previews animate in the page: the **source** picture and the **OLED result** with your settings. The panel on
-   the right (*Live OLED*) still shows only what the base station really shows: the GIF appears there when you press
-   **Start / Stop GIF** and disappears when you stop it.
+2. Two previews animate in the page: the **source** picture and the **OLED result** with your settings. They start
+   by themselves when a GIF is opened; the **Pause / Play** button in the header of the *Preview* card freezes and
+   resumes them. They only run while the window is open and this page is selected: closing the window or choosing
+   another page stops them (nothing is rendered), and they continue from the same frame when you come back, unless
+   you paused them. The panel on the right (*Live OLED*) still shows only what the base station really shows: the GIF
+   appears there when you press **Start / Stop GIF** and disappears when you stop it. Pause / Play does not touch
+   *Start / Stop GIF*.
 3. Change settings. If the GIF is playing on the OLED it is re-rendered a moment after you stop moving a slider
    (the playback restarts from its first frame).
 4. **Save project…** keeps the settings, **Export GIF…** writes the finished two-colour animation.
 
 Settings are stored in `config.toml` (`[animation_settings]`) and apply to the GIF you start next, also from the tray
 menu or the classic window.
+
+> The preview **Pause / Play** button and the memory rules under *Limits* were added after v0.6.0 (see `CHANGELOG.md`,
+> "Unreleased").
 
 ## Settings
 
@@ -68,8 +75,11 @@ files of other programs (including GGIF's own `ggif-project`) are refused with a
 ## Limits
 
 GIF file ≤ 64 MiB, ≤ 2048 × 2048 px, ≤ 2000 frames, ≤ 64 Mpx in total. Pictures larger than 480 px are shrunk while
-loading (the screen is 128 px wide; this leaves room for zoom). A GIF that is neither playing nor open in the editor is
-dropped from memory after 30 s and decoded again when needed.
+loading (the screen is 128 px wide; this leaves room for zoom). The decoded pictures are the largest memory item of the
+application (`width × height × 4` bytes per frame: about 40 MiB for 60 frames of 480 × 360, 88 MiB for 100 frames of 480 × 480), so they
+are kept only while they are used: a GIF that is not being edited or re-rendered is dropped 10 s after its last use,
+and at once when the settings window is closed. It is decoded again from the file when needed; the frames that play on
+the OLED (1 kB each) are not affected.
 
 ## What is not in this version
 

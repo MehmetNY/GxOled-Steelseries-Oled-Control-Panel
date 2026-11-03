@@ -1289,6 +1289,12 @@ pub fn open() {
         }
     }
 }
+/// `true` while the classic settings window or the classic profile editor is on screen.
+pub fn any_visible() -> bool {
+    let main = STATE.get().and_then(|state| state.lock().ok().map(|s| s.hwnd));
+    let editor = EDITOR.get().and_then(|editor| editor.lock().ok().map(|e| e.hwnd));
+    [main, editor].into_iter().flatten().any(|hwnd| hwnd != 0 && unsafe { IsWindowVisible(hwnd as Handle) } != 0)
+}
 pub fn hide() {
     let hwnd = STATE.get().and_then(|state| state.lock().ok().map(|s| s.hwnd));
     if let Some(hwnd) = hwnd {

@@ -36,6 +36,11 @@ the previous modern start never painted its first frame (marker file `%APPDATA%\
   are real, so a GIF appears when it is started and disappears when it is stopped, exactly as on the device. When no
   device frame exists (base station disconnected, or showing its own volume screen) it shows what the configured GIF
   or clock would look like and the panel is titled *OLED preview*.
+* **Nothing runs for a window nobody sees.** The mirror, the editor previews and the pixel buffers exist only while a
+  settings window is visible: when it is closed the buffers are freed (they are rebuilt in about 15 ms when it is shown
+  again), the previews stop, a decoded GIF is dropped and the main loop falls back from a 10 ms to a 50 ms rhythm (it
+  still wakes exactly at each full second for the OLED clock). On Windows the working set is trimmed afterwards. See
+  the CHANGELOG entry "lower resource use" for the figures and for what is *not* measured.
 * **General → Settings Summary** lists the choices made on that page (opening mode, language, appearance, start with
   Windows, what happens when GxOled closes). It is read-only; the controls are the cards on the left.
 

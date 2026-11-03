@@ -7,6 +7,7 @@
 //! The settings model and the tone / dither maths follow GGIF-Studio (MIT, (c) 2026 Abdelnour Osman,
 //! <https://github.com/D4rkTT/GGIF-Studio>); this crate is an independent Rust reimplementation.
 
+pub mod clock;
 pub mod export;
 pub mod plan;
 pub mod process;
@@ -15,6 +16,7 @@ pub mod settings;
 pub mod source;
 pub mod studio;
 
+pub use clock::PreviewClock;
 pub use project::Project;
 pub use settings::{Background, Dither, Fit, Param, Settings};
 pub use source::Source;

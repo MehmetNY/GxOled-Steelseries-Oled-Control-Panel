@@ -86,6 +86,7 @@ pub fn svg_inner(name: &str) -> Option<&'static str> {
         "maximize-2" => r##"<path d="M15 3h6v6"/> <path d="m21 3-7 7"/> <path d="m3 21 7-7"/> <path d="M9 21H3v-6"/>"##,
         "palette" => r##"<path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z"/> <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/> <circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/> <circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/> <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/>"##,
         "scissors" => r##"<circle cx="6" cy="6" r="3"/> <path d="M8.12 8.12 12 12"/> <path d="M20 4 8.12 15.88"/> <circle cx="6" cy="18" r="3"/> <path d="M14.8 14.8 20 20"/>"##,
+        "pause" => r##"<rect x="14" y="3" width="5" height="18" rx="1"/> <rect x="5" y="3" width="5" height="18" rx="1"/>"##,
         _ => return None,
     })
 }

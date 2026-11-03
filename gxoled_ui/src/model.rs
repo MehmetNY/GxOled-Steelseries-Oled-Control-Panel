@@ -105,6 +105,8 @@ pub struct StudioModel {
     pub mono: Vec<bool>,
     pub mono_w: usize,
     pub mono_h: usize,
+    /// The previews are advancing (`false` = paused by the user).
+    pub playing: bool,
     /// Result of the last Save / Export / Open action; empty hides the line.
     pub status: String,
     pub status_ok: bool,

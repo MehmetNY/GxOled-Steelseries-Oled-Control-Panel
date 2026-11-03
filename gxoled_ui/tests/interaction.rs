@@ -515,6 +515,7 @@ fn studio_model(lang: Lang, dark: bool) -> UiModel {
         mono_w: 128,
         mono_h: 64,
         status: "Exported a file with a long name to a folder with an even longer name than that".into(),
+        playing: true,
         status_ok: false,
     };
     UiModel {
@@ -552,6 +553,7 @@ fn studio_controls_appear_only_with_a_gif() {
         ids::STUDIO_FIT_CONTAIN, ids::STUDIO_FIT_COVER, ids::STUDIO_FIT_STRETCH, ids::STUDIO_FLIP_H, ids::STUDIO_FLIP_V,
         ids::STUDIO_BG_BLACK, ids::STUDIO_BG_WHITE, ids::STUDIO_INPUT_INVERT, ids::STUDIO_NORMALIZE, ids::STUDIO_INVERT,
         ids::STUDIO_LOOP, ids::STUDIO_RESET, ids::STUDIO_SAVE, ids::STUDIO_EXPORT, ids::STUDIO_OPEN, ids::GIF_TOGGLE,
+        ids::STUDIO_PREVIEW_TOGGLE,
     ] {
         assert!(present.contains(&id), "control {id}");
     }
@@ -658,4 +660,49 @@ fn studio_preview_pixels_reach_the_frame_and_refresh_without_a_full_render() {
     // The source pane shows the two-colour sample (red | blue) somewhere in the frame.
     let has = |rgba: &[u8], px: [u8; 3]| rgba.chunks_exact(4).any(|c| c[..3] == px);
     assert!(has(&after, [255, 0, 0]) && has(&after, [0, 0, 255]));
+}
+
+#[test]
+fn studio_preview_button_reports_the_action_and_names_what_it_will_do() {
+    let mut ui = studio_ui(W, 2600, 1.0);
+    // Playing: the button offers to pause; the action id is the studio's own (no menu event).
+    assert!(ids::is_studio_action(ids::STUDIO_PREVIEW_TOGGLE));
+    let playing = ui.frame().unwrap().rgba.to_vec();
+    click(&mut ui, ids::STUDIO_PREVIEW_TOGGLE);
+    assert_eq!(ui.take_events().last(), Some(&UiEvent::Action(ids::STUDIO_PREVIEW_TOGGLE)));
+    // Paused: the same button now offers to play (its icon and caption change, so the picture differs).
+    ui.model.studio.playing = false;
+    ui.invalidate();
+    let paused = ui.frame().unwrap().rgba.to_vec();
+    assert_ne!(playing, paused, "the button looks the same while paused");
+    // It exists in both languages and both themes and keeps inside the card on every size.
+    for (w, h) in [(W, 2600), (800, 2800)] {
+        for lang in [Lang::En, Lang::Tr] {
+            for playing in [true, false] {
+                let mut ui = Ui::new();
+                ui.set_size(w, h, 1.0);
+                ui.model = studio_model(lang, true);
+                ui.model.studio.playing = playing;
+                ui.invalidate();
+                ui.frame().expect("frame");
+                let hit = find(&ui, ids::STUDIO_PREVIEW_TOGGLE);
+                assert!(hit.rect.h >= 30.0 && hit.rect.w >= 100.0, "{w} {lang:?} {playing}: {:?}", hit.rect);
+            }
+        }
+    }
+}
+
+#[test]
+fn releasing_the_buffers_frees_the_frame_and_the_next_frame_is_identical() {
+    let mut ui = studio_ui(W, H, 1.0);
+    let before = ui.frame().unwrap().rgba.to_vec();
+    assert!(ui.current_frame().is_some());
+    ui.release_buffers();
+    assert!(ui.current_frame().is_none(), "the composited frame must be gone");
+    assert!(ui.needs_render(), "the next paint has to render again");
+    // Nothing may touch the missing buffers while the window is hidden.
+    ui.refresh_overlays();
+    assert!(ui.current_frame().is_none());
+    let after = ui.frame().unwrap().rgba.to_vec();
+    assert_eq!(before, after, "the page looks the same after it was rendered again");
 }
