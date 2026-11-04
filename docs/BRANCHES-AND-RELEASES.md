@@ -7,10 +7,11 @@
 | `v0.6.1` | GxOled Advanced v0.6.1 | Current. GIF Studio preview Pause / Play, previews that stop while the window is closed, lower resource use while idle. Assets: `GxOled.Advanced.v0.6.1.exe`, `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md`. |
 | `stable` | GxOled Light v0.4.0 | Older light build (`GxOled.Light.v0.4.0.exe`, `gxoled-cli.exe`). Fallback; do not touch. |
 
-On 2026-11-04 the owner had the GitHub releases of `v0.5.0`, `v0.5.1`, `v0.5.2`, `v0.5.3`, `v0.5.3-beta`, `v0.5.3-beta.2` and
-`v0.6.0` deleted so that only `v0.6.1` and the *GxOled Light* `stable` release remain. Their **git tags and release branches were
-kept** (source history; an EXE can be rebuilt from a tag), and `v0.6.0`'s GIF Studio is part of `v0.6.1`. Their change notes stay in `CHANGELOG.md`.
-The remaining releases and `stable` are not deleted, retagged or force-pushed.
+On 2026-11-04 the owner asked for the GitHub releases of `v0.5.0`, `v0.5.1`, `v0.5.2`, `v0.5.3`, `v0.5.3-beta`, `v0.5.3-beta.2` and
+`v0.6.0` to be removed so that only `v0.6.1` and the *GxOled Light* `stable` release remain (releases cannot be deleted from a
+Claude session, so this is done by the owner in the GitHub UI or with `gh release delete <tag>`). Their **git tags and release
+branches are kept** (source history; an EXE can be rebuilt from a tag), and `v0.6.0`'s GIF Studio is part of `v0.6.1`. Their change
+notes stay in `CHANGELOG.md`. `v0.6.1` and `stable` are not deleted, retagged or force-pushed.
 
 ## Branches
 
