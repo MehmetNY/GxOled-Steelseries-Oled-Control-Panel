@@ -813,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "gxoled_app"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -839,7 +839,7 @@ dependencies = [
 
 [[package]]
 name = "gxoled_cli"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "gxoled_draw"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -863,7 +863,7 @@ dependencies = [
 
 [[package]]
 name = "gxoled_lib"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "bit-vec",
@@ -873,7 +873,7 @@ dependencies = [
 
 [[package]]
 name = "gxoled_studio"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "gif",
@@ -885,7 +885,7 @@ dependencies = [
 
 [[package]]
 name = "gxoled_ui"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "gif",
  "gxoled_studio",

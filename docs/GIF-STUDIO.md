@@ -24,8 +24,7 @@ the only OLED writer.
 Settings are stored in `config.toml` (`[animation_settings]`) and apply to the GIF you start next, also from the tray
 menu or the classic window.
 
-> The preview **Pause / Play** button and the memory rules under *Limits* were added after v0.6.0 (see `CHANGELOG.md`,
-> "Unreleased").
+> The preview **Pause / Play** button and the memory rules under *Limits* arrived in v0.6.1 (see `CHANGELOG.md`).
 
 ## Settings
 

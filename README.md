@@ -8,7 +8,7 @@ Clock styles, burn-in mitigation, SteelClock-Go animations, GIF playback, bright
 </p>
 
 <p align="center">
-  <a href="https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases/tag/v0.6.0"><strong>Download GxOled Advanced v0.6.0</strong></a>
+  <a href="https://github.com/MehmetNY/gxoled-steelseries-oled-control-panel/releases/tag/v0.6.1"><strong>Download GxOled Advanced v0.6.1</strong></a>
   &nbsp;·&nbsp;
   <a href="#features">Features</a>
   &nbsp;·&nbsp;
@@ -17,7 +17,7 @@ Clock styles, burn-in mitigation, SteelClock-Go animations, GIF playback, bright
   <a href="#developers--ai-agents">Developer guide</a>
 </p>
 
-> **Current release:** v0.6.0 adds the **GIF Studio editor**: open a GIF, tune fit, rotation, zoom, brightness, contrast, gamma, threshold and one of five dither modes while two live previews show the source and the 1-bit OLED result, play it on the base station, and export or save it as a project ([`docs/GIF-STUDIO.md`](docs/GIF-STUDIO.md)). It is a single-GIF editor based on the processing model of [GGIF-Studio](https://github.com/D4rkTT/GGIF-Studio) (MIT); layers, text and a timeline are not in this version. The window now opens about 30 % smaller, and the right-hand OLED mirror shows a GIF only while it really plays (it appears on *Start* and disappears on *Stop*). The modern settings interface from v0.5.3 (sidebar, cards, live 128 × 64 mirror, English/Türkçe, dark/light, proportional scaling) remains the default; the classic window is still inside the same EXE — tray icon → *Settings window style*, *General → Settings window*, the *Modern UI* button of the classic window, or `--classic-ui` / `--modern-ui` ([`docs/MODERN-UI.md`](docs/MODERN-UI.md)). The application is unofficial and not affiliated with SteelSeries. Third-party licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+> **Current release:** v0.6.1 adds a **Pause / Play button to the GIF Studio previews** (they start by themselves and stop while the window is closed or another page is selected) and lowers the resources used while GxOled sits in the tray (slower idle loop, nothing computed for a hidden window, buffers and decoded GIFs released, details in `CHANGELOG.md`). It builds on v0.6.0, which added the **GIF Studio editor**: open a GIF, tune fit, rotation, zoom, brightness, contrast, gamma, threshold and one of five dither modes while two live previews show the source and the 1-bit OLED result, play it on the base station, and export or save it as a project ([`docs/GIF-STUDIO.md`](docs/GIF-STUDIO.md)). It is a single-GIF editor based on the processing model of [GGIF-Studio](https://github.com/D4rkTT/GGIF-Studio) (MIT); layers, text and a timeline are not in this version. The window now opens about 30 % smaller, and the right-hand OLED mirror shows a GIF only while it really plays (it appears on *Start* and disappears on *Stop*). The modern settings interface from v0.5.3 (sidebar, cards, live 128 × 64 mirror, English/Türkçe, dark/light, proportional scaling) remains the default; the classic window is still inside the same EXE — tray icon → *Settings window style*, *General → Settings window*, the *Modern UI* button of the classic window, or `--classic-ui` / `--modern-ui` ([`docs/MODERN-UI.md`](docs/MODERN-UI.md)). The application is unofficial and not affiliated with SteelSeries. Third-party licences: [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
 
 ## Features
 
@@ -47,7 +47,7 @@ The classic Windows layout (still selectable) is pictured above. More screenshot
 
 ## Get started
 
-1. Download the [**v0.6.0 Windows release**](https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases/tag/v0.6.0) (`GxOled.Advanced.v0.6.0.exe`; compare it with `SHA256SUMS.txt`).
+1. Download the [**v0.6.1 Windows release**](https://github.com/MehmetNY/gxoled-steelseries-oled-control-panel/releases/tag/v0.6.1) (`GxOled.Advanced.v0.6.1.exe`; compare it with `SHA256SUMS.txt`).
 2. Connect a supported **SteelSeries base station** over USB and run GxOled.
 3. Open **Settings** (using the tray icon or the configured window mode). Select **Clock**, **Animations**, **GIF Studio**, or **Display**.
 4. Use **Display → Clock burn-in protection** for clock movement, and **Display → OLED screen shift** for whole-screen shifting.

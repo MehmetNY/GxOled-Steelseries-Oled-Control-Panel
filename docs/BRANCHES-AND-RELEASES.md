@@ -4,15 +4,13 @@
 
 | Tag | Release | Notes |
 | --- | --- | --- |
-| `v0.6.0` | GxOled Advanced v0.6.0 | Current. GIF Studio editor (single GIF: geometry, tone, five dither modes, playback options, live previews, export, project files); settings window opens about 30 % smaller; the OLED mirror follows Start/Stop. Assets: `GxOled.Advanced.v0.6.0.exe`, `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md`. |
-| `v0.5.3` | GxOled Advanced v0.5.3 | Previous. Modern settings interface (default) with the classic window still selectable; OLED mirror shows the real screen; proportional window scaling; *Settings Summary*. Assets: `GxOled.Advanced.v0.5.3.exe`, `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md`. |
-| `v0.5.3-beta`, `v0.5.3-beta.2` | pre-releases | Trial builds of the modern interface that led to v0.5.3. Superseded; kept, not deleted. |
-| `v0.5.2` | GxOled Advanced v0.5.2 | Previous. Original-layout Advanced UI; fixes the late hand-back after a volume-knob turn and adds *Display → Volume screen time* (1–5 s). Asset: `GxOled.Advanced.v0.5.2.exe`, `SHA256SUMS.txt`. |
-| `v0.5.1` | GxOled Advanced v0.5.1 | Older. Known issue: GxOled returned 4–6 s after a knob turn (fixed in v0.5.2). |
-| `v0.5.0` | GxOled Advanced v0.5.0 | Original-layout Advanced UI. Immutable reference for the UI. |
+| `v0.6.1` | GxOled Advanced v0.6.1 | Current. GIF Studio preview Pause / Play, previews that stop while the window is closed, lower resource use while idle. Assets: `GxOled.Advanced.v0.6.1.exe`, `SHA256SUMS.txt`, `THIRD_PARTY_NOTICES.md`. |
 | `stable` | GxOled Light v0.4.0 | Older light build (`GxOled.Light.v0.4.0.exe`, `gxoled-cli.exe`). Fallback; do not touch. |
 
-Published `v*` releases and `stable` are never deleted, retagged or force-pushed.
+On 2026-11-04 the owner had the GitHub releases of `v0.5.0`, `v0.5.1`, `v0.5.2`, `v0.5.3`, `v0.5.3-beta`, `v0.5.3-beta.2` and
+`v0.6.0` deleted so that only `v0.6.1` and the *GxOled Light* `stable` release remain. Their **git tags and release branches were
+kept** (source history; an EXE can be rebuilt from a tag), and `v0.6.0`'s GIF Studio is part of `v0.6.1`. Their change notes stay in `CHANGELOG.md`.
+The remaining releases and `stable` are not deleted, retagged or force-pushed.
 
 ## Branches
 
@@ -20,7 +18,7 @@ Published `v*` releases and `stable` are never deleted, retagged or force-pushed
 | --- | --- |
 | `main` | Source of the latest release. |
 | `release/v<version>-advanced` | One per release; pushing it builds the Windows EXE (MSVC, `--locked`), records its SHA-256 and publishes the GitHub release (`.github/workflows/release.yml`). The workflow refuses to overwrite an existing release. |
-| `release/v0.5.0-advanced`, `release/v0.5.1-advanced`, `release/v0.5.2-advanced`, `release/v0.5.3-advanced` | Source lines of those releases (references). |
+| `release/v0.5.0-advanced` … `release/v0.5.3-advanced`, `release/v0.6.0-advanced` | Source lines of those (now deleted) releases (references). |
 | `release/v0.5.3-beta`, `release/v0.5.3-beta.2` | Source of the two trial pre-releases (the beta workflow was retired with v0.5.3). |
 | `fix/media-overlay-and-version-v050` | Older fix branch, already contained in `main`. |
 | `automation/republish-exact-v0.5.0` | CI that rebuilds and replaces v0.5.0 from user-provided source. Do not re-run casually. |
@@ -31,7 +29,7 @@ Published `v*` releases and `stable` are never deleted, retagged or force-pushed
 ## How a release is made
 
 1. Change on a branch; keep the classic Win32 settings layout (only add controls, never redesign) — the modern interface lives in `gxoled_ui` and `modern_*.rs`.
-2. Bump `version` in the root `Cargo.toml`, the four workspace entries in `Cargo.lock` and the `GxOled Advanced vX.Y.Z` label in
+2. Bump `version` in the root `Cargo.toml`, the six workspace entries (`gxoled_app`, `gxoled_cli`, `gxoled_draw`, `gxoled_lib`, `gxoled_studio`, `gxoled_ui`) in `Cargo.lock` and the `GxOled Advanced vX.Y.Z` label in
    `gxoled_app/src/settings_window.rs`; add a `CHANGELOG.md` entry.
 3. Push `release/vX.Y.Z-advanced`. CI runs `cargo check`, the unit tests and the release build, then creates tag `vX.Y.Z` with the EXE
    and `SHA256SUMS.txt`. Fast-forward `main` to the released commit.

@@ -1,6 +1,4 @@
-## Unreleased — GIF Studio preview play / pause, lower resource use while idle
-
-> Not released yet: the heading becomes `## GxOled Advanced vX.Y.Z — …` when the version is chosen (the release workflow looks the entry up by that heading).
+## GxOled Advanced v0.6.1 — GIF Studio preview play / pause, lower resource use while idle
 
 - **New: play / pause button on the GIF Studio preview.** The *Preview* card has a small button in its header (same style as the other secondary buttons, icon + caption *Pause* / *Play*, *Duraklat* / *Oynat*). A GIF that is opened plays by itself in both previews (source and OLED result). The button freezes and resumes the **previews only**: *Start / Stop GIF* (what the base station and the *Live OLED* mirror show) is unchanged and independent.
 - **Fix — the preview no longer runs when nobody looks at it.** Closing the settings window or selecting another page stops the preview clock and nothing is rendered for it (previously the editor previews were advanced every 40 ms even while the window was hidden). Coming back continues from the same frame; a pause pressed by the user stays a pause; opening another GIF starts it from the beginning, playing.
