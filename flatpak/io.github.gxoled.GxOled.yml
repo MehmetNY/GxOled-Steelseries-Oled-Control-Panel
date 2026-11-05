@@ -36,6 +36,7 @@ modules:
       - install -Dm644 flatpak/io.github.gxoled.GxOled.desktop /app/share/applications/io.github.gxoled.GxOled.desktop
       - install -Dm644 flatpak/io.github.gxoled.GxOled.metainfo.xml /app/share/metainfo/io.github.gxoled.GxOled.metainfo.xml
       - install -Dm644 gxoled_app/assets/gxoled.png /app/share/icons/hicolor/128x128/apps/io.github.gxoled.GxOled.png
+      - install -Dm644 assets/branding/gxoled-icon.svg /app/share/icons/hicolor/scalable/apps/io.github.gxoled.GxOled.svg
     sources:
       - type: dir
         path: ..

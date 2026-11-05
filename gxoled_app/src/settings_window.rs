@@ -190,6 +190,8 @@ unsafe extern "system" {
     fn SetScrollInfo(hwnd:Handle,bar:i32,info:*const ScrollInfo,redraw:i32)->i32;
     fn SetBkColor(dc:Handle,color:u32)->u32;
     fn LoadCursorW(instance:Handle, id:*const u16)->Handle;
+    /// Resource id 1 is the application icon the build embeds (the same one the modern window uses).
+    fn LoadIconW(instance:Handle, id:*const u16)->Handle;
     fn BeginPaint(hwnd:Handle,paint:*mut Paint)->Handle;
     fn EndPaint(hwnd:Handle,paint:*const Paint)->i32;
     fn InvalidateRect(hwnd:Handle,rect:*const Rect,erase:i32)->i32;
@@ -872,7 +874,7 @@ fn paint_panels(dc:Handle, s:&State,cw:i32,ch:i32){
         if s.page!=5 {
             draw_label(dc,"SteelSeries  •  128 x 64",
                 &Rect{left:p_x,top:346,right:cw-18,bottom:374},muted,false);
-            draw_label(dc,"GxOled Advanced v0.6.1",
+            draw_label(dc,"GxOled Advanced v0.6.2",
                 &Rect{left:p_x,top:395,right:cw-20,bottom:422},muted,false);
             rounded(dc,&Rect{left:p_x-4,top:458,right:cw-25,bottom:555},
                 if dark{color(30,35,43)}else{color(240,249,248)},border,16);
@@ -1122,7 +1124,7 @@ pub fn create(tx:Sender<MenuEvent>) -> Result<(),String> {
     let class=wide("GxOledNativeSettings2026");
     let inst=unsafe{GetModuleHandleW(ptr::null())};
     let cls=WndClass{style:0,proc:Some(wnd_proc),cls_extra:0,wnd_extra:0,instance:inst,
-        icon:ptr::null_mut(),cursor:unsafe{LoadCursorW(ptr::null_mut(),32512usize as *const u16)},
+        icon:unsafe{LoadIconW(inst,1usize as *const u16)},cursor:unsafe{LoadCursorW(ptr::null_mut(),32512usize as *const u16)},
         background:unsafe{GetSysColorBrush(COLOR_WINDOW as i32)},
         menu_name:ptr::null(),class_name:class.as_ptr()};
     if unsafe{RegisterClassW(&cls)}==0{return Err("RegisterClassW failed".into());}
@@ -1539,7 +1541,7 @@ pub(super) fn open_profile_editor_with(entry:ProfileEntry,target:std::path::Path
     let cls=wide("GxOledProfileEdit2026");
     let inst=unsafe{GetModuleHandleW(ptr::null())};
     let wnd=WndClass{style:0,proc:Some(wnd_proc),cls_extra:0,wnd_extra:0,instance:inst,
-        icon:ptr::null_mut(),cursor:unsafe{LoadCursorW(ptr::null_mut(),32512usize as *const u16)},
+        icon:unsafe{LoadIconW(inst,1usize as *const u16)},cursor:unsafe{LoadCursorW(ptr::null_mut(),32512usize as *const u16)},
         background:unsafe{GetSysColorBrush(COLOR_WINDOW as i32)},menu_name:ptr::null(),class_name:cls.as_ptr()};
     if unsafe{RegisterClassW(&wnd)}==0{profile_error("GxOled","Unable to register editor window");return;}
     let sw=unsafe{GetSystemMetrics(0)}.max(640);

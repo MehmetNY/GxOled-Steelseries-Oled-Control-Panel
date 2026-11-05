@@ -620,11 +620,14 @@ struct Icon {
 }
 impl Icon {
     fn load(buf: &[u8]) -> Self {
-        let pixels = image::load_from_memory(buf)
-            .unwrap()
-            .resize(32, 32, image::imageops::FilterType::Lanczos3)
-            .to_rgba8()
-            .into_vec();
+        let picture = image::load_from_memory(buf).unwrap();
+        // The tray pictures are drawn on exactly 32 x 32 whole pixels; resampling would only blur them.
+        let picture = if picture.width() == 32 && picture.height() == 32 {
+            picture
+        } else {
+            picture.resize(32, 32, image::imageops::FilterType::Lanczos3)
+        };
+        let pixels = picture.to_rgba8().into_vec();
         let surf = unsafe {
             sdl::SDL_CreateSurfaceFrom(
                 32,
@@ -665,7 +668,7 @@ fn menu_callback(entry: *mut sdl::SDL_TrayEntry, f: impl Fn()) {
     unsafe { sdl::SDL_SetTrayEntryCallback(entry, Some(c_menu_callback), f) };
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ClockRect {
     x: isize,
     y: isize,
@@ -682,10 +685,24 @@ impl ClockRect {
     }
 
     fn separated_from(self, other: ClockRect, margin: isize) -> bool {
-        self.x + self.w as isize + margin <= other.x
-            || other.x + other.w as isize + margin <= self.x
-            || self.y + self.h as isize + margin <= other.y
-            || other.y + other.h as isize + margin <= self.y
+        self.clearance(other) >= margin
+    }
+
+    /// The free space between the two rectangles along the axis where they are furthest apart (negative when
+    /// they overlap on both axes: how deep they reach into each other). `separated_from(m)` is `clearance >= m`.
+    fn clearance(self, other: ClockRect) -> isize {
+        let across_x = (self.x - (other.x + other.w as isize)).max(other.x - (self.x + self.w as isize));
+        let across_y = (self.y - (other.y + other.h as isize)).max(other.y - (self.y + self.h as isize));
+        across_x.max(across_y)
+    }
+}
+
+/// From `grid`, the positions whose clock is clearest of the `previous` one (all of them when several tie).
+fn clearest_of_previous(grid: Vec<ClockPosition>, previous: ClockRect) -> Vec<ClockPosition> {
+    let best = grid.iter().map(|p| p.rect.clearance(previous)).max();
+    match best {
+        Some(best) => grid.into_iter().filter(|p| p.rect.clearance(previous) == best).collect(),
+        None => grid,
     }
 }
 
@@ -1112,6 +1129,13 @@ fn minute_random_index(minute_key: i64, length: usize) -> usize {
     (value as usize) % length
 }
 
+/// The headset status icon mode that really applies. The icon is a small picture in the top-left corner: the
+/// full-screen Casio clock has no room for it, and a GIF or a Go animation owns the whole screen. Every place that
+/// shows or removes the icon asks this, so the tray menu, the settings window and the per-second pass agree.
+fn effective_status_notify(mode: StatusNotifyMode, style: ConfigClockStyle, animation_active: bool) -> StatusNotifyMode {
+    if style == ConfigClockStyle::CasioF91W || animation_active { StatusNotifyMode::Off } else { mode }
+}
+
 fn clock_obstacles(
     dev: &DrawDevice,
     media: Option<&Media>,
@@ -1141,8 +1165,22 @@ fn choose_clock_offset(
     minute_key: i64,
     style: ConfigClockStyle,
 ) -> (isize, isize) {
-    let (base_x, base_y, bitmap_w, bitmap_h, screen_w, screen_h) =
-        clock_layout(dev, text, media_visible, style);
+    let layout = clock_layout(dev, text, media_visible, style);
+    clock_offset_in(layout, media_visible, mode, previous_rect, obstacles, minute_key, style)
+}
+
+/// The search of [`choose_clock_offset`] for a clock of the given `layout` (see [`clock_layout`]); it needs no
+/// device, so the placement rules can be tested on their own.
+fn clock_offset_in(
+    layout: (isize, isize, usize, usize, usize, usize),
+    media_visible: bool,
+    mode: ClockBurnInMode,
+    previous_rect: Option<ClockRect>,
+    obstacles: &[ClockRect],
+    minute_key: i64,
+    style: ConfigClockStyle,
+) -> (isize, isize) {
+    let (base_x, base_y, bitmap_w, bitmap_h, screen_w, screen_h) = layout;
     // OLED screen shifting can displace the whole image by up to 4 px per axis.
     // Keep 4 px clear of the physical screen edges so the clock isn't clipped.
     const EDGE_GUARD: isize = 4;
@@ -1251,6 +1289,27 @@ fn choose_clock_offset(
                         }
                     }
                 }
+            }
+
+            // A big clock leaves no position with the full 12 px gap: the 54 px analog clock has room for two
+            // places on a 128 px screen, and none at all while it still stands in the middle. Giving up here
+            // kept it in the middle for good, and the mode meant to spread the pixels did not move it at all.
+            // Take the position that gets furthest from the previous clock instead.
+            if candidates.is_empty()
+                && let Some(previous) = previous_rect
+            {
+                let mut grid = Vec::new();
+                for x in grid_values(max_x, 4).into_iter().filter(|x| *x >= min_x) {
+                    for y in grid_values(max_y, 3).into_iter().filter(|y| *y >= min_y) {
+                        grid.push(make_clock_position(x, y, bitmap_w, bitmap_h, screen_w));
+                    }
+                }
+                let free: Vec<ClockPosition> = grid
+                    .iter()
+                    .copied()
+                    .filter(|c| !obstacles.iter().any(|o| c.rect.overlaps(*o)))
+                    .collect();
+                candidates = clearest_of_previous(if free.is_empty() { grid } else { free }, previous);
             }
         }
     }
@@ -1539,8 +1598,8 @@ fn main() {
     // Create tray icon with menu
     unsafe { sdl::SDL_SetHint(sdl::SDL_HINT_VIDEO_ALLOW_SCREENSAVER, c"1".as_ptr()) };
     assert!(unsafe { sdl::SDL_Init(sdl::SDL_INIT_VIDEO) });
-    let icon = Icon::load(include_bytes!("../assets/gxoled.png"));
-    let icon_error = Icon::load(include_bytes!("../assets/gxoled_error.png"));
+    let icon = Icon::load(include_bytes!("../assets/tray.png"));
+    let icon_error = Icon::load(include_bytes!("../assets/tray_error.png"));
     let tray = unsafe { sdl::SDL_CreateTray(icon_error.surf, c"GxOled".as_ptr()) };
     assert!(!tray.is_null());
     set_tray_tooltip(tray, config.language, false);
@@ -2166,13 +2225,14 @@ fn main() {
                     config_updated = true;
                     config.status_notify = mode;
                     tm_status_notify.update_checked(mode);
-                    if animation_layer.is_some() {
-                        if let Some(id) = notif_layer.take() {
-                            dev.remove_layer(id);
-                        }
-                    } else {
-                        notif_update(&mut dev, &mut notif_layer, mode, is_connected, notif_expiry);
-                    }
+                    let animation_active = animation_layer.is_some() || (cfg!(target_os = "windows") && config.go_animation.is_some());
+                    notif_update(
+                        &mut dev,
+                        &mut notif_layer,
+                        effective_status_notify(mode, config.clock_style, animation_active),
+                        is_connected,
+                        notif_expiry,
+                    );
                     last_clock_shift_minute = None;
                 }
                 #[cfg(target_os = "windows")]
@@ -2275,7 +2335,7 @@ fn main() {
                         .map_err(|e| e.to_string())
                         .and_then(|m| if m.len() > 1_000_000 { Err("file is too large for a project".to_owned()) } else { Ok(()) })
                         .and_then(|_| std::fs::read_to_string(&path).map_err(|e| e.to_string()))
-                        .and_then(|json| gxoled_studio::Project::from_json(&json).map_err(|e| e.to_string()));
+                        .and_then(|json| gxoled_studio::Project::from_json(&json).map_err(|e| format!("{e:#}")));
                     match opened {
                         Ok(project) => {
                             // GifSelected loads the GIF and applies the project's settings.
@@ -2748,21 +2808,14 @@ fn main() {
                     if wireless != is_connected {
                         is_connected = wireless;
                         notif_expiry = Local::now() + NOTIF_DUR;
-                        if animation_layer.is_some() {
-                            if let Some(id) = notif_layer.take() {
-                                dev.remove_layer(id);
-                            }
-                        } else {
-                            notif_update(
-                                &mut dev,
-                                &mut notif_layer,
-                                if config.clock_style==ConfigClockStyle::CasioF91W {
-                                    StatusNotifyMode::Off
-                                } else {config.status_notify},
-                                is_connected,
-                                notif_expiry,
-                            );
-                        }
+                        let animation_active = animation_layer.is_some() || (cfg!(target_os = "windows") && config.go_animation.is_some());
+                        notif_update(
+                            &mut dev,
+                            &mut notif_layer,
+                            effective_status_notify(config.status_notify, config.clock_style, animation_active),
+                            is_connected,
+                            notif_expiry,
+                        );
                         last_clock_shift_minute = None;
                         force_redraw = true;
                     }
@@ -2779,6 +2832,15 @@ fn main() {
             // Remove expired notifications in Notify mode
             if config.status_notify == StatusNotifyMode::Notify
                 && time >= notif_expiry
+                && let Some(layer) = notif_layer.take()
+            {
+                dev.remove_layer(layer);
+            }
+            // The icon does not belong on the Casio face or over an animation (a change of clock style or the start
+            // of an animation leaves it behind otherwise).
+            let animation_active = animation_layer.is_some() || (cfg!(target_os = "windows") && config.go_animation.is_some());
+            let status_mode = effective_status_notify(config.status_notify, config.clock_style, animation_active);
+            if status_mode == StatusNotifyMode::Off
                 && let Some(layer) = notif_layer.take()
             {
                 dev.remove_layer(layer);
@@ -2817,15 +2879,7 @@ fn main() {
             } else {
                 // Update notifications
                 if notif_layer.is_none() {
-                    notif_update(
-                        &mut dev,
-                        &mut notif_layer,
-                        if config.clock_style==ConfigClockStyle::CasioF91W {
-                            StatusNotifyMode::Off
-                        } else {config.status_notify},
-                        is_connected,
-                        notif_expiry,
-                    );
+                    notif_update(&mut dev, &mut notif_layer, status_mode, is_connected, notif_expiry);
                 }
 
                 // Fetch media once a second (before pausing screen)
@@ -3379,5 +3433,184 @@ mod loop_pause_tests {
             wakeups += 1;
         }
         assert!((20..=22).contains(&wakeups), "{wakeups} wake-ups per second");
+    }
+}
+
+#[cfg(test)]
+mod clock_placement_tests {
+    use super::*;
+
+    type Layout = (isize, isize, usize, usize, usize, usize);
+    const SCREEN: (usize, usize) = (128, 64);
+
+    /// What `clock_layout` gives a digital clock with the bundled font at its default size (16 px) on a 128 x 64
+    /// screen: the position of the centred clock and the size of the drawn text.
+    fn digital(style: ConfigClockStyle, text: &str) -> Layout {
+        let font = TextRenderer::new_pixel_operator();
+        let size = if style == ConfigClockStyle::DigitalBold { 16.0 * 1.48 } else { 16.0 };
+        let bitmap = font.render_lines_at_size(text, size).into_iter().next().unwrap();
+        let w = bitmap.w + if style == ConfigClockStyle::DigitalBold { 1 } else { 0 };
+        let line_height = font.line_height_at_size(size);
+        ((SCREEN.0 - w.min(SCREEN.0)) as isize / 2, (SCREEN.1 as isize - line_height as isize) / 2, w, bitmap.h, SCREEN.0, SCREEN.1)
+    }
+
+    /// The round / square analog clock without media (54 x 54 px, centred).
+    const ANALOG: Layout = (37, 5, 54, 54, SCREEN.0, SCREEN.1);
+
+    /// The rectangle a clock of `layout` takes with the offset the search returned.
+    fn placed(layout: Layout, offset: (isize, isize)) -> ClockRect {
+        ClockRect { x: layout.0 + offset.0, y: layout.1 + offset.1, w: layout.2, h: layout.3 }
+    }
+
+    /// `minutes` consecutive minutes of "No overlapping Pixels", each placed against the clock of the minute before.
+    /// The first minute follows a clock that stood in the middle, as when the mode is switched on or the clock
+    /// style is changed.
+    fn run(layout: Layout, style: ConfigClockStyle, minutes: i64) -> Vec<ClockRect> {
+        let mut rects = Vec::new();
+        let mut previous = Some(placed(layout, (0, 0)));
+        for minute in 0..minutes {
+            let offset = clock_offset_in(layout, false, ClockBurnInMode::NoOverlap, previous, &[], 20_000 + minute, style);
+            let rect = placed(layout, offset);
+            rects.push(rect);
+            previous = Some(rect);
+        }
+        rects
+    }
+
+    #[test]
+    fn the_bundled_font_gives_the_sizes_these_tests_rely_on() {
+        assert_eq!(digital(ConfigClockStyle::DigitalOriginal, "12:34:56"), (38, 24, 52, 10, 128, 64));
+        assert_eq!(digital(ConfigClockStyle::DigitalBold, "12:34:56"), (25, 20, 78, 15, 128, 64));
+        assert_eq!(digital(ConfigClockStyle::DigitalBold, "12:34:56 ÖS"), (11, 20, 105, 18, 128, 64));
+    }
+
+    #[test]
+    fn clearance_is_the_gap_that_separated_from_asks_for() {
+        let a = ClockRect { x: 10, y: 10, w: 20, h: 10 };
+        // 12 px to the right, level: exactly the margin.
+        let right = ClockRect { x: 42, y: 10, w: 20, h: 10 };
+        assert_eq!(a.clearance(right), 12);
+        assert!(a.separated_from(right, 12) && !a.separated_from(right, 13));
+        // Below and to the right: the larger of the two gaps counts.
+        let diagonal = ClockRect { x: 40, y: 40, w: 5, h: 5 };
+        assert_eq!(a.clearance(diagonal), 20);
+        // Overlapping on both axes is negative, deeper overlap is lower; the order of the arguments does not matter.
+        let near = ClockRect { x: 15, y: 12, w: 20, h: 10 };
+        let nearer = ClockRect { x: 11, y: 10, w: 20, h: 10 };
+        assert!(a.clearance(near) < 0 && a.clearance(nearer) < a.clearance(near));
+        assert_eq!(a.clearance(near), near.clearance(a));
+    }
+
+    #[test]
+    fn the_clearest_positions_are_the_ones_furthest_from_the_previous_clock() {
+        let position = |x| make_clock_position(x, 5, 54, 54, 128);
+        let previous = position(37).rect;
+        let best = clearest_of_previous(vec![position(4), position(30), position(37), position(44), position(70)], previous);
+        // 4 and 70 reach equally far to either side, the others lie deeper in the old clock.
+        assert_eq!(best.iter().map(|p| p.x).collect::<Vec<_>>(), vec![4, 70]);
+        assert!(clearest_of_previous(Vec::new(), previous).is_empty());
+    }
+
+    #[test]
+    fn the_analog_clock_leaves_the_middle_and_keeps_moving() {
+        // 54 x 54 px on a 128 x 64 screen with the 4 px edge guard: only x = 4 and x = 70 are 12 px apart. From the
+        // middle the old search found nothing and returned "no offset" every minute, for ever.
+        for style in [ConfigClockStyle::AnalogRound, ConfigClockStyle::AnalogSquare] {
+            let rects = run(ANALOG, style, 120);
+            let xs: Vec<isize> = rects.iter().map(|r| r.x).collect();
+            assert!(xs.iter().all(|x| *x == 4 || *x == 70), "{xs:?}");
+            // It never stays where it was, and from the second minute on it has the whole 12 px gap again.
+            assert_ne!(rects[0], placed(ANALOG, (0, 0)), "still in the middle after the first minute");
+            assert!(xs.windows(2).all(|w| w[0] != w[1]), "{xs:?}");
+            for pair in rects.windows(2) {
+                assert!(pair[1].separated_from(pair[0], 12), "{:?} -> {:?}", pair[0], pair[1]);
+            }
+        }
+    }
+
+    #[test]
+    fn the_big_digital_clock_leaves_the_middle_and_keeps_moving() {
+        // Digital Big (also with the 12-hour "ÖS" / "PM" suffix) is too large for a 12 px gap from a clock that stands
+        // in the middle: the old search stood still there, too.
+        for (style, text) in [
+            (ConfigClockStyle::DigitalBold, "12:34:56"),
+            (ConfigClockStyle::DigitalBold, "12:34:56 ÖS"),
+        ] {
+            let layout = digital(style, text);
+            let rects = run(layout, style, 200);
+            assert_ne!(rects[0], placed(layout, (0, 0)), "{text}: still in the middle after the first minute");
+            for pair in rects.windows(2) {
+                assert_ne!(pair[0], pair[1], "{text}: stood still");
+                assert!(pair[1].separated_from(pair[0], 12), "{text}: {:?} -> {:?}", pair[0], pair[1]);
+            }
+        }
+    }
+
+    #[test]
+    fn the_standard_digital_clock_keeps_the_full_gap_every_minute() {
+        // The usual case (a clock that leaves room) does not need the fallback and is not changed by it.
+        for text in ["12:34:56", "12:34:56 AM", "12:34:56 ÖS"] {
+            let layout = digital(ConfigClockStyle::DigitalOriginal, text);
+            let rects = run(layout, ConfigClockStyle::DigitalOriginal, 300);
+            for pair in rects.windows(2) {
+                assert!(pair[1].separated_from(pair[0], 12), "{text}: {:?} -> {:?}", pair[0], pair[1]);
+            }
+            let distinct: std::collections::HashSet<(isize, isize)> = rects.iter().map(|r| (r.x, r.y)).collect();
+            assert!(distinct.len() > 10, "{text}: only {} different places in 300 minutes", distinct.len());
+        }
+    }
+
+    #[test]
+    fn no_clock_leaves_the_screen_whatever_the_mode() {
+        let layouts = [
+            (ANALOG, ConfigClockStyle::AnalogRound),
+            (digital(ConfigClockStyle::DigitalOriginal, "12:34:56"), ConfigClockStyle::DigitalOriginal),
+            (digital(ConfigClockStyle::DigitalBold, "12:34:56"), ConfigClockStyle::DigitalBold),
+            (digital(ConfigClockStyle::DigitalBold, "12:34:56 ÖS"), ConfigClockStyle::DigitalBold),
+        ];
+        for (layout, style) in layouts {
+            for mode in [ClockBurnInMode::Off, ClockBurnInMode::Wide, ClockBurnInMode::NoOverlap] {
+                let mut previous = Some(placed(layout, (0, 0)));
+                for minute in 0..200 {
+                    let offset = clock_offset_in(layout, false, mode, previous, &[], 900 + minute, style);
+                    let rect = placed(layout, offset);
+                    assert!(rect.x >= 0 && rect.y >= 0, "{rect:?}");
+                    assert!(rect.x + rect.w as isize <= SCREEN.0 as isize, "{rect:?}");
+                    assert!(rect.y + rect.h as isize <= SCREEN.1 as isize, "{rect:?}");
+                    previous = Some(rect);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod status_icon_tests {
+    use super::*;
+
+    const MODES: [StatusNotifyMode; 5] = [
+        StatusNotifyMode::Off,
+        StatusNotifyMode::Notify,
+        StatusNotifyMode::Always,
+        StatusNotifyMode::WhenConnected,
+        StatusNotifyMode::WhenDisconnected,
+    ];
+
+    #[test]
+    fn the_icon_follows_the_chosen_mode_on_an_ordinary_clock() {
+        for style in [ConfigClockStyle::DigitalOriginal, ConfigClockStyle::DigitalBold, ConfigClockStyle::AnalogRound, ConfigClockStyle::AnalogSquare] {
+            for mode in MODES {
+                assert!(effective_status_notify(mode, style, false) == mode);
+            }
+        }
+    }
+
+    #[test]
+    fn the_casio_face_and_every_animation_have_no_icon() {
+        for mode in MODES {
+            assert!(effective_status_notify(mode, ConfigClockStyle::CasioF91W, false) == StatusNotifyMode::Off);
+            assert!(effective_status_notify(mode, ConfigClockStyle::DigitalOriginal, true) == StatusNotifyMode::Off);
+            assert!(effective_status_notify(mode, ConfigClockStyle::CasioF91W, true) == StatusNotifyMode::Off);
+        }
     }
 }

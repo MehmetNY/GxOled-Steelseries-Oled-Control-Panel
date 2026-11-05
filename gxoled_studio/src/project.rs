@@ -3,7 +3,7 @@
 use crate::settings::Settings;
 use anyhow::{Context, bail};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const FORMAT: &str = "gxoled-gif-project";
 pub const VERSION: u32 = 1;
@@ -34,8 +34,25 @@ impl Project {
         if project.version > VERSION {
             bail!("This project was saved by a newer GxOled version");
         }
+        if is_network_or_device_path(&project.source) {
+            bail!(
+                "The picture of this project is on a network share or a device path, which GxOled does not open from a project file. Open the GIF itself and save the project again."
+            );
+        }
         project.settings = project.settings.clamped();
         Ok(project)
+    }
+}
+
+/// A project file can come from anywhere. The picture it names must not make GxOled reach for a network location:
+/// opening `\\host\share\x.gif` makes Windows try to sign in to that computer. UNC paths (`\\host\share`, also
+/// written `//host/share`) and device paths (`\\.\...`) are refused; a drive letter, a mapped network drive and the
+/// long local form `\\?\C:\...` are not.
+fn is_network_or_device_path(path: &Path) -> bool {
+    let text = path.to_string_lossy().replace('/', "\\");
+    match text.strip_prefix(r"\\?\") {
+        Some(rest) => rest.get(..4).is_some_and(|start| start.eq_ignore_ascii_case(r"UNC\")),
+        None => text.starts_with(r"\\"),
     }
 }
 
@@ -43,6 +60,20 @@ impl Project {
 mod tests {
     use super::*;
     use crate::settings::{Dither, Fit};
+
+    #[test]
+    fn a_project_cannot_point_at_a_network_or_device_path() {
+        for source in [r"\\host\share\x.gif", "//host/share/x.gif", r"\\.\pipe\x", r"\\?\UNC\host\share\x.gif", r"\\?\unc\host\share\x.gif"] {
+            assert!(is_network_or_device_path(Path::new(source)), "{source} should be refused");
+            let json = format!(r#"{{"format":"gxoled-gif-project","version":1,"source":{},"settings":{{}}}}"#, serde_json::to_string(source).unwrap());
+            let error = Project::from_json(&json).unwrap_err().to_string();
+            assert!(error.contains("network share"), "{source}: {error}");
+        }
+        // Local paths, mapped drives, relative names and the long local form are fine.
+        for source in [r"C:\gifs\cat.gif", r"Z:\nas\cat.gif", "cat.gif", r"gifs\cat.gif", "/home/me/cat.gif", r"\\?\C:\gifs\cat.gif", ""] {
+            assert!(!is_network_or_device_path(Path::new(source)), "{source} should be allowed");
+        }
+    }
 
     #[test]
     fn round_trip() {

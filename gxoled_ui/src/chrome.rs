@@ -45,6 +45,41 @@ pub fn nav_label(page: Page, tr: bool) -> &'static str {
     }
 }
 
+/// Rows of the pixel "Gx" of the application icon (an 11 x 7 grid: a 5 x 7 "G", an empty column, a 5 x 5 "x" on the same
+/// baseline). The same drawing is the executable's icon, the tray icon and the README banner (`tools/make_branding.py`).
+const MARK_G: [&str; 7] = ["01110", "10001", "10000", "10111", "10001", "10001", "01110"];
+const MARK_X: [&str; 5] = ["10001", "01010", "00100", "01010", "10001"];
+
+/// The application icon as scene shapes: a rounded tile with a rim and the pixel "Gx". `cell` is one pixel in UI units;
+/// whole numbers keep the pixels sharp at 100 % and 200 % scale. Horizontal runs are drawn as one rectangle.
+pub fn logo_mark(sc: &mut crate::scene::Scene, x: f32, y: f32, size: f32, cell: f32) {
+    let rim = (size * 0.04).round().max(1.0);
+    sc.rect_border(Rect::new(x, y, size, size), size * 0.195, "#111519", "#383c42", rim);
+    let gx = x + ((size - 11.0 * cell) / 2.0).floor();
+    let gy = y + ((size - 7.0 * cell) / 2.0).floor();
+    let mut row_runs = |rows: &[&str], col0: usize, row0: usize| {
+        for (r, row) in rows.iter().enumerate() {
+            let bytes = row.as_bytes();
+            let mut c = 0;
+            while c < bytes.len() {
+                if bytes[c] != b'1' {
+                    c += 1;
+                    continue;
+                }
+                let start = c;
+                while c < bytes.len() && bytes[c] == b'1' {
+                    c += 1;
+                }
+                let rx = gx + (col0 + start) as f32 * cell;
+                let ry = gy + (row0 + r) as f32 * cell;
+                sc.rect(Rect::new(rx, ry, (c - start) as f32 * cell, cell), 0.0, "#ffffff");
+            }
+        }
+    };
+    row_runs(&MARK_G, 0, 0);
+    row_runs(&MARK_X, 6, 2);
+}
+
 /// Window background: the shell colour everywhere with the content area inset. Drawn first.
 pub fn backdrop(c: &mut Ctx, w: f32, h: f32) {
     let (shell, content) = (c.p.shell, c.p.content);
@@ -65,9 +100,8 @@ pub fn front(c: &mut Ctx, w: f32, h: f32) {
 fn sidebar(c: &mut Ctx, _h: f32) {
     let tr = c.lang() == crate::model::Lang::Tr;
     let p = c.p;
-    // Logo block
-    c.sc.rect(Rect::new(20.0, 30.0, 35.0, 35.0), 9.0, p.accent);
-    c.sc.text_mid(37.5, 47.5, "Gx", &Text::new(13.5, 700, "#ffffff").mid());
+    // Logo block: the application icon (36 units, 2-unit pixels) and the name
+    logo_mark(&mut c.sc, 20.0, 30.0, 36.0, 2.0);
     c.sc.text_mid(68.0, 47.5, "GxOled", &Text::new(17.0, 700, p.text));
     c.sc.rect(Rect::new(0.0, 90.5, SIDEBAR_W, 1.0), 0.0, p.divider);
 
@@ -174,8 +208,7 @@ pub fn footer_chip(c: &mut Ctx, x: f32, y: f32, w: f32) -> Rect {
     let p = c.p;
     let r = Rect::new(x, y, w, 61.0);
     c.card_frame(r);
-    c.sc.rect(Rect::new(x + 18.0, r.cy() - 13.5, 27.0, 27.0), 7.0, p.accent);
-    c.sc.text_mid(x + 31.5, r.cy(), "Gx", &Text::new(11.0, 700, "#ffffff").mid());
+    logo_mark(&mut c.sc, x + 18.0, (r.cy() - 14.0).round(), 28.0, 2.0);
     c.sc.text_mid(x + 59.0, r.cy(), "GxOled Advanced · MehmetNY", &Text::new(13.8, 400, p.text_muted));
     let v = c.m.version.clone();
     c.sc.text_mid(r.right() - 20.0, r.cy(), &v, &Text::new(13.8, 400, p.text_muted).end());

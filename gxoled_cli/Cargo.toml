@@ -15,6 +15,5 @@ sdl3-static = []
 gxoled_lib = { path = "../gxoled_lib" }
 gxoled_draw = { path = "../gxoled_draw" }
 
-anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 spin_sleep = "1"
