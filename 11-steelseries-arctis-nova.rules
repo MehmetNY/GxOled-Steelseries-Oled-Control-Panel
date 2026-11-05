@@ -13,3 +13,11 @@ SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12e0", MODE="06
 # SteelSeries Arctis Nova Pro Wireless (Xbox)
 SUBSYSTEM=="usb", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12e5", MODE="0666"
 SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="12e5", MODE="0666"
+
+# SteelSeries Arctis Nova Pro Wireless (Xbox White)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="225d", MODE="0666"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="225d", MODE="0666"
+
+# SteelSeries Arctis Nova Elite (base station; unofficial, untested)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2244", MODE="0666"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="1038", ATTRS{idProduct}=="2244", MODE="0666"

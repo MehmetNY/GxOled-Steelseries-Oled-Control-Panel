@@ -35,7 +35,8 @@ function Run-Checked([string]$Title, [scriptblock]$Command) {
 }
 
 Run-Checked 'Cargo check'   { cargo check --locked -p gxoled_app --features sdl3-static }
-Run-Checked 'Unit tests'    { cargo test --locked -p gxoled_lib -p gxoled_draw -p gxoled_app --features gxoled_app/sdl3-static }
+# Same crates as the "Windows MSVC build" job of .github/workflows/build.yml (the engine, the GIF Studio and the UI toolkit included).
+Run-Checked 'Unit tests'    { cargo test --locked -p gxoled_app -p gxoled_lib -p gxoled_draw -p gxoled_studio -p gxoled_ui --features gxoled_app/sdl3-static }
 Run-Checked 'Release build' { cargo build --locked --release -p gxoled_app --features sdl3-static }
 
 # --- 3. Hand the result back next to this script -----------------------------------------

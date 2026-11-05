@@ -9,6 +9,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+      - name: README changelogs match CHANGELOG.md and the release files are consistent
+        run: python3 tools/sync_readme_changelog.py --check
+      - name: Test the Python helper scripts
+        run: python3 -m unittest discover -s tools -p "test_*.py"
       - name: Cache
         uses: actions/cache@v6
         with:
@@ -22,6 +26,22 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
       - name: Test HID parsing, drawing logic and the modern UI toolkit
         run: cargo test --locked -p gxoled_lib -p gxoled_draw -p gxoled_studio -p gxoled_ui
+
+  go-helper:
+    name: Go animation helper
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Go version
+        run: go version
+      - name: Vet and test the renderer and the widgets
+        working-directory: go_animations
+        run: |
+          go vet ./...
+          go test ./...
+      - name: The two copies of the built-in profiles are identical
+        run: diff -r go_animations/profiles/128x64 go_animations/cmd/renderer/profiles
 
   windows-msvc-build:
     name: Windows MSVC build

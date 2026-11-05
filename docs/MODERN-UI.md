@@ -16,7 +16,7 @@ Any one of these is enough; none needs a re-install.
 | Classic window → **Modern UI** button (left rail, above *Quit*, every page) | Back to the modern window. |
 | Start `gxoled.exe --classic-ui` / `--modern-ui` | Forces that style and saves it. |
 | Edit `%APPDATA%\GxOled\config.toml`: `ui_style = "Classic"` or `"Modern"` | Same, offline. |
-| Install **v0.5.2** | Release without any of this code; the extra `ui_style` key is ignored. |
+| Build the tag `v0.5.2` from source | A version without any of this code (its release is no longer listed); the extra `ui_style` key is ignored. |
 
 **Türkçe özet:** Arayüzler arasında geçiş: tepsi simgesi → *Ayar penceresi biçimi* → *Modern* / *Klasik*; modern
 pencerede *Genel → Ayar penceresi*; klasik pencerede sol menüdeki *Modern UI* düğmesi; ya da `gxoled.exe --classic-ui` /
@@ -37,10 +37,14 @@ the previous modern start never painted its first frame (marker file `%APPDATA%\
   device frame exists (base station disconnected, or showing its own volume screen) it shows what the configured GIF
   or clock would look like and the panel is titled *OLED preview*.
 * **Nothing runs for a window nobody sees.** The mirror, the editor previews and the pixel buffers exist only while a
-  settings window is visible: when it is closed the buffers are freed (they are rebuilt in about 15 ms when it is shown
-  again), the previews stop, a decoded GIF is dropped and the main loop falls back from a 10 ms to a 50 ms rhythm (it
-  still wakes exactly at each full second for the OLED clock). On Windows the working set is trimmed afterwards. See
-  the CHANGELOG entry "lower resource use" for the figures and for what is *not* measured.
+  settings window can be seen — shown and **not minimised** (since v0.6.2; Windows still calls a minimised window
+  "visible", so v0.6.1 kept working for it). When it is closed or minimised the buffers are freed (they are rebuilt in
+  about 15 ms when it is shown or restored), the previews stop, a decoded GIF is dropped and the main loop falls back
+  from a 10 ms to a 50 ms rhythm (it still wakes exactly at each full second for the OLED clock). On Windows the
+  working set is trimmed afterwards. See the CHANGELOG entry "lower resource use" (v0.6.1) for the figures and for
+  what is *not* measured.
+* **The header shows the connection.** A green dot and the real model name (*Arctis Nova Pro Wired*, *… Wireless (Xbox)*,
+  *Nova Elite*, …) while a base station is connected, a grey dot and *Waiting for device…* otherwise (v0.6.2; the dot used to stay green after the base station was unplugged).
 * **General → Settings Summary** lists the choices made on that page (opening mode, language, appearance, start with
   Windows, what happens when GxOled closes). It is read-only; the controls are the cards on the left.
 
@@ -63,7 +67,7 @@ blitted nearest-neighbour. Repaints are event-driven; the OLED mirror updates on
 
 | Level | What |
 | --- | --- |
-| Unit-tested | `gxoled_ui`: layout (including identical layout at every window size, both languages), hit testing, keyboard/mouse/scroll/slider/profile-list behaviour, editor surface. `gxoled_draw`: every clock style renders, styles differ, the clock follows the time and the burn-in offset, the GIF preview timing. `gxoled_app`: control-id → event table, config snapshot, volume-time choices, version label. All run in Linux and Windows CI. |
+| Unit-tested | `gxoled_ui`: layout (including identical layout at every window size, both languages), hit testing, keyboard/mouse/scroll/slider/profile-list behaviour, editor surface. `gxoled_draw`: every clock style renders, styles differ, the clock follows the time and the burn-in offset, the GIF preview timing. `gxoled_app`: control-id → event table, config snapshot, volume-time choices, version label, clock placement, status-icon rules, config-file and start-up-entry handling. The `gxoled_ui`, `gxoled_draw`, `gxoled_studio` and `gxoled_lib` tests run in the Linux and the Windows CI job; the `gxoled_app` tests run in the Windows job (on Linux they need `--features gxoled_app/sdl3-static`, which builds SDL3 and needs `cmake` and the X11 development packages). |
 | Rendered and reviewed | All pages and the editor, English and Turkish, dark and light, at several sizes/DPIs (PNG review on Linux). |
 | Compiled on Windows | Windows MSVC `cargo check`, `cargo test`, `cargo build` in CI for the commit named in the release notes. |
 | **Not verified on a physical PC/base station** | Window creation/behaviour on a real desktop, DPI changes between monitors, DWM caption colours (Windows 11), the native text control of the editor, modal file dialogs, repaint cost while hovering, the live OLED mirror against a real base station (the frame tap is plain code but only runs with a device). |
@@ -71,7 +75,7 @@ blitted nearest-neighbour. Repaints are event-driven; the OLED mirror updates on
 ## Not in the modern interface (yet)
 
 * A custom (frameless) title bar — the native frame is used and coloured through DWM.
-* The GIF editor inspired by GGIF-Studio; its licence has to be checked against GPL-3.0 first.
+* Layers, text layers and a timeline in GIF Studio (see [`GIF-STUDIO.md`](GIF-STUDIO.md)).
 
 ## Third-party material
 

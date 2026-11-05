@@ -1,7 +1,10 @@
 name: Release
 # Pushing a branch named release/v<version>-advanced builds the Windows EXE and publishes the GitHub
 # release v<version>. The version comes from the workspace Cargo.toml, so this file does not change
-# per release. An existing tag or release is never overwritten.
+# per release. The body of the release is release-notes/v<version>.md (short descriptive headings
+# only) plus a footer with the commit, the SHA-256 and the verification status; every detail is in
+# CHANGELOG.md. An existing release or an existing tag is never overwritten (deleting a release
+# leaves its tag behind, so both are checked).
 on:
   push:
     branches:
@@ -18,18 +21,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # The write token must not sit in .git/config while dependency build scripts run;
+          # the publish step passes it explicitly.
+          persist-credentials: false
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           rustflags: ''
-      - name: Read version and verify the branch, the classic UI, the modern UI sources and the version label
+      - name: Read version and verify the branch, the classic UI, the modern UI sources, the version label and the release notes
         shell: pwsh
         run: |
           $manifest = Get-Content Cargo.toml -Raw
           $m = [regex]::Match($manifest, '(?ms)\[workspace\.package\].*?^version\s*=\s*"([^"]+)"')
           if (-not $m.Success) { throw 'workspace version not found in Cargo.toml' }
           $version = $m.Groups[1].Value
-          if ($env:GITHUB_REF_NAME -like 'release/*' -and $env:GITHUB_REF_NAME -ne "release/v$version-advanced") {
+          # Every trigger, a manual run included, must come from the release branch of this version.
+          if ($env:GITHUB_REF_NAME -ne "release/v$version-advanced") {
             throw "Branch $env:GITHUB_REF_NAME does not match Cargo.toml version $version (expected release/v$version-advanced)"
           }
           $ui = Get-Content gxoled_app/src/settings_window.rs -Raw
@@ -41,6 +49,9 @@ jobs:
             if (-not (Test-Path $file)) { throw "Missing modern UI file: $file" }
           }
           if (-not (Test-Path go_animations/gxoled-animations.exe)) { throw 'Embedded Go renderer missing' }
+          $notesFile = "release-notes/v$version.md"
+          if (-not (Test-Path $notesFile)) { throw "$notesFile is missing: it is the body of the GitHub release (short descriptive headings)" }
+          if ((Get-Content $notesFile -Raw).Trim().Length -eq 0) { throw "$notesFile is empty" }
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Cargo check
         run: cargo check --locked -p gxoled_app --features sdl3-static
@@ -52,15 +63,25 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          $name = "GxOled Advanced v$env:VERSION.exe"
+          # The name GitHub serves (it turns spaces into dots), so SHA256SUMS.txt matches the downloaded file.
+          $name = "GxOled.Advanced.v$env:VERSION.exe"
           Copy-Item target/release/gxoled.exe "release/$name"
           Copy-Item THIRD_PARTY_NOTICES.md release/THIRD_PARTY_NOTICES.md
           $sha = (Get-FileHash "release/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$sha  $name" | Set-Content release/SHA256SUMS.txt -Encoding ascii
+          # Unix line ending: "sha256sum -c SHA256SUMS.txt" works next to the download.
+          [IO.File]::WriteAllText((Join-Path $PWD 'release/SHA256SUMS.txt'), "$sha  $name`n")
           $text = Get-Content CHANGELOG.md -Raw
-          $entry = [regex]::Match($text, "(?ms)^## GxOled Advanced v$([regex]::Escape($env:VERSION))\b.*?(?=^## |\z)")
-          if (-not $entry.Success) { throw "CHANGELOG.md has no entry for v$env:VERSION" }
-          $notes = @($entry.Value.Trim(), '', "Windows x64, built from commit $env:GITHUB_SHA with cargo --locked on windows-latest; the MSVC compile and the unit tests passed in CI in this run. The build itself does not verify behaviour on a physical PC / base station.", '', "Switch between the modern and the classic settings window: tray icon -> Settings window style, or run ``gxoled.exe --classic-ui`` / ``--modern-ui``.", '', "SHA-256: $sha") -join "`n"
+          if (-not [regex]::IsMatch($text, "(?m)^## GxOled Advanced v$([regex]::Escape($env:VERSION))\b")) { throw "CHANGELOG.md has no entry for v$env:VERSION" }
+          $body = (Get-Content "release-notes/v$env:VERSION.md" -Raw).Trim()
+          $short = $env:GITHUB_SHA.Substring(0, 7)
+          $notes = @(
+            $body,
+            '',
+            "Windows x64 | commit [$short](https://github.com/$env:GITHUB_REPOSITORY/commit/$env:GITHUB_SHA) | SHA-256 $sha",
+            '',
+            'Compiled with cargo --locked on windows-latest and unit-tested in CI. Not verified on a physical PC / base station.',
+            "Every detail of every version: https://github.com/$env:GITHUB_REPOSITORY#changelogs"
+          ) -join "`n"
           Set-Content release/notes.md $notes -Encoding utf8
       - name: Upload build artifact
         uses: actions/upload-artifact@v7
@@ -79,5 +100,9 @@ jobs:
           $tag = "v$env:VERSION"
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) { throw "$tag already exists; refusing to overwrite" }
-          gh release create $tag "release/GxOled Advanced v$env:VERSION.exe" release/SHA256SUMS.txt release/THIRD_PARTY_NOTICES.md --target "$env:GITHUB_SHA" --title "GxOled Advanced $tag" --notes-file release/notes.md --latest
+          # The owner deletes old releases but their tags stay. gh release create would silently reuse such a
+          # tag (--target only applies to a new one) and attach the new files to the old commit: refuse that too.
+          gh api "repos/$env:GITHUB_REPOSITORY/git/ref/tags/$tag" *> $null
+          if ($LASTEXITCODE -eq 0) { throw "Tag $tag already exists (was its release deleted?); refusing to reuse it" }
+          gh release create $tag "release/GxOled.Advanced.v$env:VERSION.exe" release/SHA256SUMS.txt release/THIRD_PARTY_NOTICES.md --target "$env:GITHUB_SHA" --title "GxOled Advanced $tag" --notes-file release/notes.md --latest
           if ($LASTEXITCODE -ne 0) { throw 'Failed to publish the GitHub release' }

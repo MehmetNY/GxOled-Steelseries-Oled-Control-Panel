@@ -1,7 +1,7 @@
 # Windows'ta kaynak koddan derleme (TR)
 
 > **Önce şunu bil:** Sadece kullanmak için derleme yapman GEREKMİYOR; hazır EXE'yi
-> [Releases](https://github.com/MehmetNY/GxOled-Steelseries-Dac-Oled-Control-Panel/releases) sayfasından indirebilirsin.
+> [Releases](https://github.com/MehmetNY/GxOled-Steelseries-Oled-Control-Panel/releases) sayfasından indirebilirsin.
 > Bu rehber, kaynak koddan kendi EXE'ni üretmek isteyenler içindir.
 
 ## 1. Gerekenler (bir kez kurulur)
@@ -35,7 +35,8 @@ içe `...-main\...-main\target\debug\build\sdl3-sys-...`). Önlem:
 2. Betik sırayla şunları yapar (herhangi biri başarısız olursa DURUR):
    1. `cargo` ve `cmake` kurulu mu kontrol eder, değilse ne yapacağını söyler.
    2. `cargo check` — derlenebilir mi?
-   3. `cargo test` — birim testleri geçiyor mu?
+   3. `cargo test` — birim testleri geçiyor mu? (GitHub'daki Windows derlemesiyle aynı kapsam: `gxoled_app`, `gxoled_lib`,
+      `gxoled_draw`, `gxoled_studio` ve `gxoled_ui`.)
    4. `cargo build --release` — çalıştırılabilir dosyayı üretir.
 3. Başarılı olursa EXE şuraya kopyalanır: **`<depo klasörü>\dist\gxoled.exe`**; SHA-256 değeri pencerede yazar.
 4. İlk derleme SDL3 yüzünden uzun sürer (birkaç dakika). Pencereyi kapatma.

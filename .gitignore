@@ -25,3 +25,10 @@ Thumbs.db
 *.exe
 *.dll
 *.pdb
+
+# The Go animation helper is embedded into the EXE and committed on purpose (see go_animations/UPSTREAM.md).
+!/go_animations/gxoled-animations.exe
+
+# Python byte-code of the helper scripts in tools/
+__pycache__/
+*.pyc
