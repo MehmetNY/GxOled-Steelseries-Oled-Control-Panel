@@ -198,6 +198,9 @@ impl Ui {
         }
         let (w, h, scale) = self.du();
         let layout = pages::Layout::new(w, h);
+        // The list can shrink while it is scrolled (a profile was deleted): never start below the last full page,
+        // or the first rows would stay hidden although nothing is left to scroll to.
+        self.list_first = self.list_first.min(self.model.profiles.len().saturating_sub(pages::list_visible_rows()));
         let mut pass = 0;
         loop {
             pass += 1;

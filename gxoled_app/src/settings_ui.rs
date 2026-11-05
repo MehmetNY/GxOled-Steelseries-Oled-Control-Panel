@@ -96,6 +96,10 @@ fn fall_back() {
 /// Switch the visible style. The main loop calls this after saving the new `ui_style`; the window of the new
 /// style is shown so the effect of the choice is visible at once.
 pub fn set_style(new: ConfigUiStyle) {
+    // Choosing the style that is already showing must not hide the window and bring it back.
+    if new == style() && ui_active() {
+        return;
+    }
     let new = if new == ConfigUiStyle::Modern && modern_ui::failed() {
         // A modern window already failed in this session; do not trust it again until the app restarts.
         rfd::MessageDialog::new()
@@ -112,7 +116,9 @@ pub fn set_style(new: ConfigUiStyle) {
     };
     store_style(new);
     classic::hide();
-    guarded(modern_ui::hide);
+    // Not through `guarded`: after a failure that is skipped, and a modern window that is still on screen would
+    // then stay next to the classic one. Hiding it is harmless, and a panic here is only caught.
+    let _ = catch_unwind(AssertUnwindSafe(modern_ui::hide));
     open();
 }
 
@@ -166,6 +172,11 @@ pub fn set_studio_preview(source: Option<gxoled_ui::model::Image>, mono: &Bitmap
 
 pub fn set_connected(connected: bool) {
     guarded(|| modern_ui::set_connected(connected));
+}
+
+/// Name of the connected base station for the header of the modern window.
+pub fn set_device_name(name: &str) {
+    guarded(|| modern_ui::set_device_name(name));
 }
 
 /// Pump window messages for every window of this thread (classic and modern alike) and notice a modern-window failure.

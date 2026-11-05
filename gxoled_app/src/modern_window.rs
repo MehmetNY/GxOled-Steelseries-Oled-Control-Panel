@@ -445,6 +445,9 @@ unsafe fn handle(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         }
         WM_SIZE => {
             if wp as u32 == SIZE_MINIMIZED {
+                // Nothing of it can be seen now: hand the pixel buffers back, like when the window is hidden. The
+                // restore brings WM_SIZE again, which clears the BGRA copy and paints a fresh frame.
+                with_win(hwnd, |w| w.release_buffers());
                 return 0;
             }
             let (cw, ch) = (lo(lp), hi(lp));
@@ -508,7 +511,9 @@ unsafe fn handle(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
             return 0;
         }
         WM_SETCURSOR => {
-            if (lp & 0xffff) as u32 == HTCLIENT {
+            // wParam is the window under the pointer. A child control (the editor's text box) passes the message up to
+            // its parent: leave that one alone so the text box keeps its own I-beam.
+            if (lp & 0xffff) as u32 == HTCLIENT && wp == hwnd as usize {
                 let mut pt = POINT { x: 0, y: 0 };
                 GetCursorPos(&mut pt);
                 ScreenToClient(hwnd, &mut pt);
@@ -584,6 +589,12 @@ unsafe fn handle(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
                 }
             }
             if let Some(key) = key_of(wp as u16, shift) {
+                // Holding Enter / Space / Escape must act once (bit 30 of lParam: the key was already down), like a
+                // native button or checkbox; the navigation keys keep repeating.
+                let held = (lp >> 30) & 1 != 0;
+                if held && matches!(key, Key::Enter | Key::Space | Key::Escape) {
+                    return 0;
+                }
                 with_win(hwnd, |w| w.ui.key_down(key));
                 after_input(hwnd);
                 return 0;
@@ -804,8 +815,10 @@ pub fn exists(kind: Kind) -> bool {
     hwnd_of(kind).is_some()
 }
 
+/// `true` while the window can be seen: shown and not minimised. A minimised window keeps the "visible" style, but
+/// nothing it draws can be seen, so it must not keep the application's mirror and preview work running.
 pub fn is_visible(kind: Kind) -> bool {
-    hwnd_of(kind).is_some_and(|h| unsafe { IsWindowVisible(h) } != 0)
+    hwnd_of(kind).is_some_and(|h| unsafe { IsWindowVisible(h) != 0 && IsIconic(h) == 0 })
 }
 
 pub fn show(kind: Kind) {

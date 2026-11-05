@@ -125,8 +125,33 @@ pub struct Device {
     dev: DeviceMerge,
     pub width: usize,
     pub height: usize,
+    /// USB product ID of the base station that was found (see [`product_name`]).
+    pub product_id: u16,
     oled_report_id: u8,
     info_report_id: u8,
+}
+
+/// USB product IDs (vendor 0x1038, SteelSeries) of the base stations `Device::connect` accepts.
+pub const SUPPORTED_PRODUCT_IDS: [u16; 6] = [
+    0x12cb, // Arctis Nova Pro Wired
+    0x12cd, // Arctis Nova Pro Wired (Xbox)
+    0x12e0, // Arctis Nova Pro Wireless
+    0x12e5, // Arctis Nova Pro Wireless (Xbox)
+    0x225d, // Arctis Nova Pro Wireless (Xbox White)
+    0x2244, // Arctis Nova Elite (base station, unofficial/untested - see issue #26)
+];
+
+/// Name of a supported base station by USB product ID, for display only (the table of IDs `Device::connect` accepts).
+pub fn product_name(product_id: u16) -> &'static str {
+    match product_id {
+        0x12cb => "SteelSeries Arctis Nova Pro Wired",
+        0x12cd => "SteelSeries Arctis Nova Pro Wired (Xbox)",
+        0x12e0 => "SteelSeries Arctis Nova Pro Wireless",
+        0x12e5 => "SteelSeries Arctis Nova Pro Wireless (Xbox)",
+        0x225d => "SteelSeries Arctis Nova Pro Wireless (Xbox White)",
+        0x2244 => "SteelSeries Arctis Nova Elite",
+        _ => "SteelSeries base station",
+    }
 }
 impl Device {
     /// Connect to a SteelSeries GG device.
@@ -138,14 +163,7 @@ impl Device {
             .device_list()
             .filter(|d| {
                 d.vendor_id() == 0x1038 // SteelSeries
-        && [
-            0x12cb, // Arctis Nova Pro Wired
-            0x12cd, // Arctis Nova Pro Wired (Xbox)
-            0x12e0, // Arctis Nova Pro Wireless
-            0x12e5, // Arctis Nova Pro Wireless (Xbox)
-            0x225d, // Arctis Nova Pro Wireless (Xbox White)
-            0x2244, // Arctis Nova Elite (base station, unofficial/untested - see issue #26)
-        ].contains(&d.product_id())
+        && SUPPORTED_PRODUCT_IDS.contains(&d.product_id())
             // Nova Elite base station exposes the OLED/info collections on interface 3, not 4
             // (interface 4 there is an unrelated consumer-control/media-key interface).
             && d.interface_number() == if d.product_id() == 0x2244 { 3 } else { 4 }
@@ -223,6 +241,7 @@ impl Device {
             dev,
             width: SCREEN_WIDTH,
             height: SCREEN_HEIGHT,
+            product_id: device_infos[0].product_id(),
             oled_report_id,
             info_report_id,
         })
@@ -439,7 +458,16 @@ impl Device {
 
 #[cfg(test)]
 mod tests {
-    use super::{DeviceEvent, parse_event_report};
+    use super::{DeviceEvent, SUPPORTED_PRODUCT_IDS, parse_event_report, product_name};
+
+    #[test]
+    fn every_supported_base_station_has_its_own_name() {
+        let mut names: Vec<_> = SUPPORTED_PRODUCT_IDS.iter().map(|&pid| product_name(pid)).collect();
+        assert!(names.iter().all(|n| *n != product_name(0)), "a supported ID falls back to the generic name");
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), SUPPORTED_PRODUCT_IDS.len(), "two IDs share a name");
+    }
 
     #[test]
     fn physical_volume_dial_is_distinct_from_volume_query_reply() {

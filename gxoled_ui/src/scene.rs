@@ -122,6 +122,9 @@ impl<'a> Text<'a> {
     }
 }
 
+/// Text for an SVG attribute or element. Characters XML 1.0 does not allow at all (control characters other than
+/// tab and line breaks, U+FFFE, U+FFFF) are dropped: a single one, say in a file name, would make the parser reject
+/// the whole picture and the window would stay blank.
 pub fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -130,6 +133,8 @@ pub fn escape(text: &str) -> String {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
+            '\t' | '\n' | '\r' => out.push(c),
+            c if (c as u32) < 0x20 || c == '\u{FFFE}' || c == '\u{FFFF}' => {}
             _ => out.push(c),
         }
     }
@@ -300,5 +305,19 @@ impl Scene {
             n(w), n(h), n(w), n(h), self.defs, self.body
         );
         (svg, self.hits, self.overlays)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::escape;
+
+    #[test]
+    fn markup_is_escaped_and_forbidden_characters_are_dropped() {
+        assert_eq!(escape("a<b>&\"c\""), "a&lt;b&gt;&amp;&quot;c&quot;");
+        assert_eq!(escape("tab\tline\nbreak\r"), "tab\tline\nbreak\r");
+        assert_eq!(escape("bell\u{7}nul\u{0}esc\u{1b}x\u{FFFE}\u{FFFF}"), "bellnulescx");
+        // Everything else, in any script, is kept.
+        assert_eq!(escape("Şarkı — кот 猫 ₺"), "Şarkı — кот 猫 ₺");
     }
 }

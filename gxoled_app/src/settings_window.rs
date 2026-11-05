@@ -120,6 +120,7 @@ const COLOR_DARK_BG: u32 = 0x001b1918; // #18191B
 const COLOR_EDITOR_BG:u32=0x00272422; // #222427
 const COLOR_DARK_TEXT: u32 = 0x00f5f4ee;
 const SW_SHOW: i32 = 5;
+const SW_RESTORE: i32 = 9;
 const PM_REMOVE: u32 = 1;
 const COLOR_WINDOW: usize = 5;
 const SRCCOPY: u32 = 0x00cc0020;
@@ -166,6 +167,7 @@ unsafe extern "system" {
     fn DefWindowProcW(hwnd:Handle, message:u32, w:usize, l:isize)->isize;
     fn ShowWindow(hwnd:Handle, cmd:i32)->i32;
     fn IsWindowVisible(hwnd:Handle)->i32;
+    fn IsIconic(hwnd:Handle)->i32;
     fn SetForegroundWindow(hwnd:Handle)->i32;
     fn PeekMessageW(msg:*mut Message, hwnd:Handle, min:u32,max:u32,remove:u32)->i32;
     fn TranslateMessage(msg:*const Message)->i32;
@@ -571,7 +573,7 @@ fn update_labels(buttons:&[(u32,usize)], language:ConfigLanguage) {
             322 => if tr {"12 saat"}else{"12-hour"},
             354 => if tr {"Boştayken ekran koruyucu"}else{"Screensaver when idle"},
             355 => if tr {"Medya bilgilerini göster"}else{"Show media metadata"},
-            369 => "GitHub · MehmetNY/GxOled",
+            369 => "GitHub · GxOled Advanced",
             ID_KOFI => "Ko-fi · Support GxOled",
             371 => if tr {"GxOled'den çık"}else{"Quit GxOled"},
             ID_UI_MODERN => if tr {"Modern arayüz"}else{"Modern UI"},
@@ -1253,7 +1255,7 @@ pub fn create(tx:Sender<MenuEvent>) -> Result<(),String> {
     make(4,"STATIC","Media replaces the clock while music is playing. The clock returns after playback stops. Animations remain exclusive.",716,244,176,355,95,0);
     // About: open-source credits on the left, embedded publisher QR on the right.
     make(5,"STATIC","GxOled  /  MehmetNY",0,244,75,350,32,0);
-    make(5,"BUTTON","GitHub · MehmetNY/GxOled",369,244,119,355,37,0);
+    make(5,"BUTTON","GitHub · GxOled Advanced",369,244,119,355,37,0);
     make(5,"BUTTON","Ko-fi · Support GxOled",ID_KOFI,244,163,355,37,0);
     make(5,"STATIC","GxOled builds on JerwuQu/ggoled; animations come from pozitronik/steelclock-go. Their original developers deserve the biggest thanks.",ID_ABOUT_CREDITS,244,220,385,155,0);
     make(5,"STATIC","Still want to buy me a coffee? I wouldn't say no!",ID_ABOUT_COFFEE,244,390,385,96,0);
@@ -1284,16 +1286,24 @@ pub fn open() {
     let hwnd = STATE.get().and_then(|state| state.lock().ok().map(|s| s.hwnd));
     if let Some(hwnd) = hwnd {
         unsafe {
-            ShowWindow(hwnd as Handle, SW_SHOW);
+            show_or_restore(hwnd as Handle);
             SetForegroundWindow(hwnd as Handle);
         }
     }
 }
-/// `true` while the classic settings window or the classic profile editor is on screen.
+/// Bring a window back: a minimised one is restored (`SW_SHOW` leaves it on the task bar), any other is shown.
+fn show_or_restore(hwnd: Handle) {
+    unsafe { ShowWindow(hwnd, if IsIconic(hwnd) != 0 { SW_RESTORE } else { SW_SHOW }); }
+}
+/// `true` while the classic settings window or the classic profile editor can be seen: shown and not minimised
+/// (a minimised window still has the "visible" style, but nothing it draws can be seen).
 pub fn any_visible() -> bool {
     let main = STATE.get().and_then(|state| state.lock().ok().map(|s| s.hwnd));
     let editor = EDITOR.get().and_then(|editor| editor.lock().ok().map(|e| e.hwnd));
-    [main, editor].into_iter().flatten().any(|hwnd| hwnd != 0 && unsafe { IsWindowVisible(hwnd as Handle) } != 0)
+    [main, editor]
+        .into_iter()
+        .flatten()
+        .any(|hwnd| hwnd != 0 && unsafe { IsWindowVisible(hwnd as Handle) != 0 && IsIconic(hwnd as Handle) == 0 })
 }
 pub fn hide() {
     let hwnd = STATE.get().and_then(|state| state.lock().ok().map(|s| s.hwnd));
@@ -1388,8 +1398,10 @@ pub fn preview(bitmap:&gxoled_lib::Bitmap) {
     }
 }
 
+/// The project page (the repository's current name; the About page of v0.6.1 and earlier pointed at a former one).
+const PROJECT_URL: &str = "https://github.com/MehmetNY/GxOled-Steelseries-Oled-Control-Panel";
 pub(super) fn open_github() {
-    let url=wide("https://github.com/MehmetNY/GxOled-v0.4.0");
+    let url=wide(PROJECT_URL);
     let op=wide("open");
     unsafe { ShellExecuteW(ptr::null_mut(),op.as_ptr(),url.as_ptr(),ptr::null(),ptr::null(),1); }
 }
@@ -1517,7 +1529,7 @@ pub(super) fn open_profile_editor_with(entry:ProfileEntry,target:std::path::Path
             unsafe {
                 SetWindowTextW(hwnd as Handle, title.as_ptr());
                 SetWindowTextW(edit as Handle, content_w.as_ptr());
-                ShowWindow(hwnd as Handle, SW_SHOW);
+                show_or_restore(hwnd as Handle);
                 SetForegroundWindow(hwnd as Handle);
                 SetFocus(edit as Handle);
             }

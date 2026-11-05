@@ -4,7 +4,39 @@
 //! fit / rotate / flip / zoom / offset, background fill, source inversion, brightness / contrast / gamma /
 //! normalize / threshold, five dither modes, output inversion, and speed / minimum frame time / trim / loop.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
+
+// Settings are read from files that people edit by hand. A whole number that is out of range (`threshold = 300`,
+// `rotate = -90`) must be repaired, not rejected: one rejected value would make the application drop the entire
+// settings file and fall back to the defaults for everything.
+fn whole_number<'de, D: Deserializer<'de>>(d: D, lo: i64, hi: i64) -> Result<i64, D::Error> {
+    Ok(i64::deserialize(d)?.clamp(lo, hi))
+}
+
+fn de_rotate<'de, D: Deserializer<'de>>(d: D) -> Result<u16, D::Error> {
+    Ok(i64::deserialize(d)?.rem_euclid(360) as u16)
+}
+
+fn de_threshold<'de, D: Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
+    Ok(whole_number(d, 0, 255)? as u8)
+}
+
+fn de_min_frame_ms<'de, D: Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    Ok(whole_number(d, 10, MIN_FRAME_MS_MAX as i64)? as u32)
+}
+
+fn de_frame_index<'de, D: Deserializer<'de>>(d: D) -> Result<usize, D::Error> {
+    Ok(whole_number(d, 0, MAX_FRAME_INDEX as i64)? as usize)
+}
+
+fn de_optional_frame_index<'de, D: Deserializer<'de>>(d: D) -> Result<Option<usize>, D::Error> {
+    Ok(Option::<i64>::deserialize(d)?.map(|v| v.clamp(0, MAX_FRAME_INDEX as i64) as usize))
+}
+
+/// Longest "minimum frame time" (ms) the Min-frame slider offers.
+const MIN_FRAME_MS_MAX: u32 = 200;
+/// Far above any GIF the application accepts; only keeps hand-edited numbers from growing absurd.
+const MAX_FRAME_INDEX: usize = 1_000_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -52,6 +84,7 @@ pub struct Settings {
     // geometry
     pub fit: Fit,
     /// Clockwise quarter turns in degrees: 0, 90, 180 or 270.
+    #[serde(deserialize_with = "de_rotate")]
     pub rotate: u16,
     /// Mirrors are applied after the rotation, as seen on the screen.
     pub flip_h: bool,
@@ -72,6 +105,7 @@ pub struct Settings {
     pub contrast: i32,
     pub gamma: f32,
     pub normalize: bool,
+    #[serde(deserialize_with = "de_threshold")]
     pub threshold: u8,
 
     // output
@@ -81,10 +115,13 @@ pub struct Settings {
     // playback
     pub looping: bool,
     pub speed: f32,
+    #[serde(deserialize_with = "de_min_frame_ms")]
     pub min_frame_ms: u32,
     /// First frame that plays (inclusive).
+    #[serde(deserialize_with = "de_frame_index")]
     pub trim_start: usize,
     /// Last frame that plays (inclusive); `None` = the last frame of the source.
+    #[serde(deserialize_with = "de_optional_frame_index")]
     pub trim_end: Option<usize>,
 }
 
@@ -128,7 +165,7 @@ impl Settings {
         self.contrast = self.contrast.clamp(-100, 100);
         self.gamma = fin(self.gamma, 1.0).clamp(0.1, 3.0);
         self.speed = fin(self.speed, 1.0).clamp(0.1, 5.0);
-        self.min_frame_ms = self.min_frame_ms.clamp(10, 500);
+        self.min_frame_ms = self.min_frame_ms.clamp(10, MIN_FRAME_MS_MAX);
         if let Some(end) = self.trim_end
             && end < self.trim_start
         {
@@ -199,7 +236,7 @@ impl Param {
             Param::Gamma => (10, 300),
             Param::Threshold => (0, 255),
             Param::Speed => (10, 500),
-            Param::MinFrame => (10, 200),
+            Param::MinFrame => (10, MIN_FRAME_MS_MAX as i32),
             Param::TrimStart | Param::TrimEnd => (0, last),
         }
     }
@@ -311,6 +348,27 @@ mod tests {
         assert_eq!((s.offset_x, s.offset_y, s.brightness, s.contrast), (64, -64, 100, -100));
         assert_eq!((s.gamma, s.speed, s.min_frame_ms), (3.0, 0.1, 10));
         assert_eq!((s.trim_start, s.trim_end), (5, Some(5)));
+    }
+
+    #[test]
+    fn out_of_range_numbers_in_a_file_are_repaired_not_rejected() {
+        // One bad number used to make the whole file unreadable, so every other setting was lost with it.
+        let json = r#"{"threshold":300,"rotate":-90,"min_frame_ms":5000,"trim_start":-4,"trim_end":-2,"zoom":9.0,"invert":true}"#;
+        let s: Settings = serde_json::from_str(json).expect("an out-of-range number must not reject the file");
+        assert_eq!((s.threshold, s.rotate, s.min_frame_ms, s.trim_start, s.trim_end), (255, 270, 200, 0, Some(0)));
+        assert!(s.invert, "the other values of the file are kept");
+        assert_eq!(s.clamped().zoom, 3.0);
+        // In-range values are untouched, and absent ones fall back to the defaults.
+        let s: Settings = serde_json::from_str(r#"{"threshold":77,"rotate":180,"trim_end":4}"#).unwrap();
+        assert_eq!((s.threshold, s.rotate, s.trim_end, s.min_frame_ms), (77, 180, Some(4), 30));
+        // A value that is not a number at all is still an error (it is not a hand-edit slip we can interpret).
+        assert!(serde_json::from_str::<Settings>(r#"{"threshold":"high"}"#).is_err());
+    }
+
+    #[test]
+    fn the_minimum_frame_time_range_is_the_one_of_the_slider() {
+        assert_eq!(Param::MinFrame.range(10), (10, 200));
+        assert_eq!(Settings { min_frame_ms: 500, ..Settings::default() }.clamped().min_frame_ms, 200);
     }
 
     #[test]

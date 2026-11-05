@@ -24,7 +24,7 @@ use std::{
     ffi::CStr,
     io::Write,
     os::raw::c_void,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, mpsc},
     thread::sleep,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -291,7 +291,10 @@ impl Config {
     /// Save through a temporary file so an interrupted write does not truncate the user's
     /// existing settings file.
     pub fn save(&self) -> anyhow::Result<()> {
-        let path = Self::path()?;
+        self.save_to(&Self::path()?)
+    }
+
+    fn save_to(&self, path: &Path) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -308,7 +311,7 @@ impl Config {
             file.write_all(text.as_bytes())?;
             file.sync_all()?;
             drop(file);
-            std::fs::rename(&temp_path, &path)?;
+            std::fs::rename(&temp_path, path)?;
             Ok(())
         })();
         if result.is_err() {
@@ -318,28 +321,44 @@ impl Config {
     }
 
     pub fn load() -> Config {
-        if let Ok(path) = Self::path() {
-            if let Ok(text) = std::fs::read_to_string(&path) {
+        match Self::path() {
+            Ok(path) => Self::load_from(&path, Self::legacy_path().ok().as_deref()),
+            Err(_) => Config::default(),
+        }
+    }
+
+    /// Read the settings file at `path`. `legacy` is the file of the upstream-branded app, migrated on the very
+    /// first launch only (when there is no settings file yet). A file that exists but cannot be read as settings
+    /// (a typo in a hand edit, a half-written file) is never replaced by the legacy one, and is kept as
+    /// `config.toml.bad` before the next save writes fresh settings over it.
+    fn load_from(path: &Path, legacy: Option<&Path>) -> Config {
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
                 if let Some(config) = Self::parse_config(&text) {
                     return config;
                 }
             }
-        }
-
-        // If this is the first GxOled launch, migrate the previous configuration file
-        // into the new product-specific directory. The old file is left untouched as a
-        // backup; future saves go only to the new location.
-        if let Ok(legacy_path) = Self::legacy_path() {
-            if let Ok(text) = std::fs::read_to_string(&legacy_path) {
-                if let Some(config) = Self::parse_config(&text) {
-                    if let Err(error) = config.save() {
-                        eprintln!("Could not migrate legacy GxOled settings: {error}");
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // First launch of GxOled: migrate the previous configuration file into the new product-specific
+                // directory. The old file is left untouched as a backup; future saves go only to the new location.
+                if let Some(legacy) = legacy {
+                    if let Ok(text) = std::fs::read_to_string(legacy) {
+                        if let Some(config) = Self::parse_config(&text) {
+                            if let Err(error) = config.save_to(path) {
+                                eprintln!("Could not migrate legacy GxOled settings: {error}");
+                            }
+                            return config;
+                        }
                     }
-                    return config;
                 }
+                return Config::default();
             }
+            Err(_) => {}
         }
-
+        let backup = path.with_extension("toml.bad");
+        if let Err(error) = std::fs::copy(path, &backup) {
+            eprintln!("Could not keep a copy of the unreadable settings file: {error}");
+        }
         Config::default()
     }
 }
@@ -353,6 +372,12 @@ const LEGACY_STARTUP_REG_NAME: &str = "ggoled_app";
 
 #[cfg(target_os = "windows")]
 fn registry_startup_value_exists(value_label: &str) -> anyhow::Result<bool> {
+    Ok(registry_startup_value(value_label)?.is_some())
+}
+
+/// The command stored under the startup key for `value_label`; `None` when there is no (usable) text value.
+#[cfg(target_os = "windows")]
+fn registry_startup_value(value_label: &str) -> anyhow::Result<Option<String>> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::System::Registry::{
         RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_QUERY_VALUE, REG_SZ,
@@ -370,7 +395,7 @@ fn registry_startup_value_exists(value_label: &str) -> anyhow::Result<bool> {
     let mut key = std::ptr::null_mut();
     let status = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, subkey.as_ptr(), 0, KEY_QUERY_VALUE, &mut key) };
     if status == 2 {
-        return Ok(false);
+        return Ok(None);
     }
     if status != 0 {
         anyhow::bail!("Could not read Windows startup setting (error {})", status);
@@ -390,17 +415,17 @@ fn registry_startup_value_exists(value_label: &str) -> anyhow::Result<bool> {
     };
     if status == 2 {
         unsafe { RegCloseKey(key) };
-        return Ok(false);
+        return Ok(None);
     }
     if status != 0 || value_type != REG_SZ {
         unsafe { RegCloseKey(key) };
-        return Ok(false);
+        return Ok(None);
     }
 
     // Registry data is untrusted input. Bound the allocation and reject malformed UTF-16 sizes.
     if byte_len > 64 * 1024 || byte_len % 2 != 0 {
         unsafe { RegCloseKey(key) };
-        return Ok(false);
+        return Ok(None);
     }
 
     let mut buffer = vec![0u8; byte_len as usize];
@@ -416,7 +441,7 @@ fn registry_startup_value_exists(value_label: &str) -> anyhow::Result<bool> {
     };
     unsafe { RegCloseKey(key) };
     if status != 0 || byte_len as usize > buffer.len() || byte_len % 2 != 0 {
-        return Ok(false);
+        return Ok(None);
     }
 
     let value = String::from_utf16_lossy(
@@ -425,7 +450,8 @@ fn registry_startup_value_exists(value_label: &str) -> anyhow::Result<bool> {
             .map(|b| u16::from_le_bytes([b[0], b[1]]))
             .collect::<Vec<_>>(),
     );
-    Ok(!value.trim_matches('\0').trim().is_empty())
+    let value = value.trim_matches('\0').trim();
+    Ok((!value.is_empty()).then(|| value.to_owned()))
 }
 
 #[cfg(target_os = "windows")]
@@ -464,9 +490,22 @@ fn remove_legacy_startup_value() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The program a startup command launches: the quoted path at its start, or an unquoted path up to ".exe".
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn startup_command_target(command: &str) -> Option<PathBuf> {
+    let command = command.trim_matches('\0').trim();
+    if let Some(rest) = command.strip_prefix('"') {
+        let path = &rest[..rest.find('"')?];
+        return (!path.is_empty()).then(|| PathBuf::from(path));
+    }
+    let end = command.to_ascii_lowercase().find(".exe")? + ".exe".len();
+    Some(PathBuf::from(&command[..end]))
+}
+
 #[cfg(target_os = "windows")]
 fn migrate_legacy_windows_startup() -> anyhow::Result<bool> {
-    let current_enabled = windows_startup_enabled()?;
+    let current = registry_startup_value(STARTUP_REG_NAME)?;
+    let current_enabled = current.is_some();
     let legacy_enabled = registry_startup_value_exists(LEGACY_STARTUP_REG_NAME)?;
     if legacy_enabled {
         // Preserve the user's previous startup preference but point it to the new executable.
@@ -474,6 +513,16 @@ fn migrate_legacy_windows_startup() -> anyhow::Result<bool> {
             set_windows_startup(true)?;
         }
         remove_legacy_startup_value()?;
+    }
+    // An entry that still points at a copy which was moved or deleted (an update unpacked somewhere else) would
+    // show the checkbox as "on" while nothing starts at sign-in. Point it at this copy. An entry whose program
+    // still exists - another copy kept on purpose - is left alone.
+    if let Some(command) = &current {
+        if startup_command_target(command).is_some_and(|target| !target.exists()) {
+            if let Err(error) = set_windows_startup(true) {
+                eprintln!("Could not repair the Windows startup entry: {error}");
+            }
+        }
     }
     Ok(current_enabled || legacy_enabled)
 }
@@ -650,6 +699,33 @@ struct ClockPosition {
 /// The OLED's size; the studio renders for this until a device reports another one.
 const SCREEN_DIMS: (usize, usize) = (128, 64);
 
+/// The animation helper is given up after this many quick stops (or failed starts) in a row.
+#[cfg(target_os = "windows")]
+const GO_MAX_FAILURES: u32 = 3;
+/// A helper that ran at least this long before it stopped did not fail "right away".
+#[cfg(target_os = "windows")]
+const GO_STABLE_AFTER: Duration = Duration::from_secs(10);
+
+/// Tooltip of the tray icon. While no base station is connected the icon is red; this says why.
+fn set_tray_tooltip(tray: *mut sdl::SDL_Tray, language: ConfigLanguage, connected: bool) {
+    let text = match (connected, language == ConfigLanguage::Turkish) {
+        (true, _) => "GxOled Advanced",
+        (false, false) => "GxOled - no base station (DAC) connected",
+        (false, true) => "GxOled - DAC / baz istasyonu bağlı değil",
+    };
+    if let Ok(text) = std::ffi::CString::new(text) {
+        // SDL copies the text.
+        unsafe { sdl::SDL_SetTrayTooltip(tray, text.as_ptr()) };
+    }
+}
+
+/// `Instant::now()` minus `back`, or just now when the clock has not been running that long. (`now - back`
+/// panics when it would reach before the start of the clock, e.g. shortly after the PC was switched on.)
+fn ago(back: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_sub(back).unwrap_or(now)
+}
+
 /// How long the main loop rests between two passes. It runs fast (10 ms) while something needs it: a settings
 /// window that has to answer the mouse, a Go animation whose frames it forwards, a GIF re-render that is due.
 /// Otherwise it wakes every 50 ms, or at the next full second at the latest (the OLED clock changes then), so a
@@ -742,6 +818,11 @@ impl StudioSlot {
         self.last_used = Instant::now();
     }
 
+    /// Forget that the configured file failed to load, so the next `get` tries it again (an explicit Start).
+    fn retry(&mut self) {
+        self.failed = None;
+    }
+
     /// Drop the decoded GIF now. `true` if there was one.
     fn release(&mut self) -> bool {
         self.studio.take().is_some()
@@ -754,7 +835,6 @@ impl StudioSlot {
 }
 
 /// English or Turkish text, following the configured language.
-#[cfg(target_os = "windows")]
 fn say<'a>(config: &Config, en: &'a str, tr: &'a str) -> &'a str {
     if config.language == ConfigLanguage::Turkish { tr } else { en }
 }
@@ -1241,7 +1321,6 @@ enum MenuEvent {
     #[cfg(target_os = "windows")]
     ToggleMediaFromWindow,
     #[cfg(target_os = "windows")]
-    #[cfg(target_os = "windows")]
     OpenGifPickerFromWindow,
     #[cfg(target_os = "windows")]
     ToggleGifFromWindow,
@@ -1393,7 +1472,7 @@ fn main() {
                 .set_title("GxOled")
                 .set_description(
                     "GxOled is already running. Look for its icon in the system tray, and use \
-                     'Quit GxOled' there before starting another copy.",
+                     'Quit' there before starting another copy.",
                 )
                 .show();
             return;
@@ -1415,12 +1494,16 @@ fn main() {
         // that never reached its first paint also falls back to the classic window.
         let args: Vec<String> = std::env::args().skip(1).collect();
         let before = config.ui_style;
+        let mut asked_for_modern = false;
         if args.iter().any(|a| a == "--classic-ui") {
             config.ui_style = ConfigUiStyle::Classic;
         } else if args.iter().any(|a| a == "--modern-ui") {
             config.ui_style = ConfigUiStyle::Modern;
+            asked_for_modern = true;
         }
-        if settings_ui::previous_start_failed() && config.ui_style == ConfigUiStyle::Modern {
+        // An explicit `--modern-ui` is the way to try the modern window again, so it is not overruled by the marker
+        // of the failed start (a start that fails again leaves the marker, and the next plain start is classic).
+        if settings_ui::previous_start_failed() && config.ui_style == ConfigUiStyle::Modern && !asked_for_modern {
             config.ui_style = ConfigUiStyle::Classic;
             let turkish = config.language == ConfigLanguage::Turkish;
             MessageDialog::new()
@@ -1460,6 +1543,7 @@ fn main() {
     let icon_error = Icon::load(include_bytes!("../assets/gxoled_error.png"));
     let tray = unsafe { sdl::SDL_CreateTray(icon_error.surf, c"GxOled".as_ptr()) };
     assert!(!tray.is_null());
+    set_tray_tooltip(tray, config.language, false);
     let menu = unsafe { sdl::SDL_CreateTrayMenu(tray) };
     assert!(!menu.is_null());
     let (menu_tx, menu_rx) = mpsc::channel::<MenuEvent>();
@@ -1503,7 +1587,7 @@ fn main() {
         MenuEvent::SetTimeMode,
     );
 
-    let tm_media_check = menu_check(menu, c"Show media alongside clock", config.show_media);
+    let tm_media_check = menu_check(menu, c"Show media (replaces the clock)", config.show_media);
     if os.supports_media() {
         bind_menu_event(tm_media_check, &menu_tx, MenuEvent::ToggleCheck);
     } else {
@@ -1701,7 +1785,7 @@ fn main() {
                 ConfigClockStyle::DigitalBold=>set(*e,"Digital Big","Dijital Büyük"),
                 ConfigClockStyle::AnalogRound=>set(*e,"Round","Yuvarlak"),
                 ConfigClockStyle::AnalogSquare=>set(*e,"Square","Kare"),
-                ConfigClockStyle::CasioF91W=>{},
+                ConfigClockStyle::CasioF91W=>set(*e,"Casio Digital Dial","Casio Dijital Kadran"),
             }
         }
         set(tm_time_radio.title,"Time","Saat formatı");
@@ -1710,22 +1794,46 @@ fn main() {
             ConfigTimeMode::H24=>set(*e,"24-hour","24 saat"),
             ConfigTimeMode::H12=>set(*e,"12-hour (AM/PM)","12 saat (ÖÖ/ÖS)"),
         }}
-        set(tm_media_check,"Show media alongside clock","Saatin yanında medya göster");
+        set(tm_media_check,"Show media (replaces the clock)","Medyayı göster (saatin yerine geçer)");
         set(tm_status_notify.title,"Connection status icon","Bağlantı durumu simgesi");
+        for (e,value) in &tm_status_notify.entries {match value {
+            StatusNotifyMode::Off=>set(*e,"Off","Kapalı"),
+            StatusNotifyMode::Notify=>set(*e,"Notify","Bildir"),
+            StatusNotifyMode::Always=>set(*e,"Always (burn-in risk)","Her zaman (yanık izi riski)"),
+            StatusNotifyMode::WhenConnected=>set(*e,"When connected (burn-in risk)","Bağlıyken (yanık izi riski)"),
+            StatusNotifyMode::WhenDisconnected=>set(*e,"When disconnected (burn-in risk)","Bağlı değilken (yanık izi riski)"),
+        }}
         set(tm_idle_check,"Screensaver when idle","Boştayken ekran koruyucu");
         set(tm_shift_radio.title,"OLED screen shift","OLED ekran kaydırma");
+        for (e,value) in &tm_shift_radio.entries {match value {
+            ConfigShiftMode::Off=>set(*e,"Off","Kapalı"),
+            ConfigShiftMode::Low=>set(*e,"Low","Düşük"),
+            ConfigShiftMode::High=>set(*e,"High","Yüksek"),
+        }}
         set(tm_brightness_radio.title,"Screen brightness","Ekran parlaklığı");
+        for (e,level) in &tm_brightness_radio.entries {
+            // Built captions again (not `set`).
+            tray_label(*e,&format!("{}% (Level {level}/10)",*level as u32*10),&format!("%{} (Seviye {level}/10)",*level as u32*10),language);
+        }
         set(tm_volume_osd_radio.title,"Volume screen time","Ses ekranı süresi");
         for (e,ms) in &tm_volume_osd_radio.entries {
             // Not `set`: that closure was inferred for 'static literals, these captions are built.
             tray_label(*e,&volume_osd_hold_label(*ms,false),&volume_osd_hold_label(*ms,true),language);
         }
         set(tm_clock_burn_in_radio.title,"Clock burn-in protection","Saat yanık izi koruması");
+        for (e,value) in &tm_clock_burn_in_radio.entries {match value {
+            ClockBurnInMode::Off=>set(*e,"Off","Kapalı"),
+            ClockBurnInMode::Wide=>set(*e,"Random Movements","Rastgele hareket"),
+            ClockBurnInMode::NoOverlap=>set(*e,"No overlapping Pixels","Çakışmayan pikseller"),
+        }}
         set(tm_startup_check,"Start GxOled with Windows","Windows ile GxOled'i başlat");
         set(tm_animation_menu,"Animation","Animasyon");
         set(tm_add_gif,"Add GIF","GIF ekle");
         set(tm_animation_check,"Start / Stop animation","Animasyonu başlat / durdur");
         set(tm_go_anim_radio.title,"SteelClock 128x64","SteelClock 128x64");
+        for (e,value) in &tm_go_anim_radio.entries {
+            if value.is_none() {set(*e,"Off / Clock","Kapalı / Saat");}
+        }
         set(tm_open_settings,"Open Settings...","Ayarları aç...");
         set(tm_ui_radio.title,"App opening mode","Uygulama açılış biçimi");
         for (e,value) in &tm_ui_radio.entries {match value {
@@ -1739,6 +1847,10 @@ fn main() {
             ConfigUiStyle::Classic=>set(*e,"Classic","Klasik"),
         }}
         set(tm_quit_mode_radio.title,"On app quit","Uygulama kapanırken");
+        for (e,value) in &tm_quit_mode_radio.entries {match value {
+            ConfigQuitMode::Screensaver=>set(*e,"Screensaver","Ekran koruyucu"),
+            ConfigQuitMode::StockUi=>set(*e,"Stock UI","SteelSeries varsayılanı"),
+        }}
         set(tm_quit,"Quit","Çıkış");
     };
     #[cfg(target_os = "windows")]
@@ -1793,6 +1905,8 @@ fn main() {
     #[cfg(target_os = "windows")]
     let mut oled_available = true;
     let mut animation_layer: Option<LayerId> = None;
+    // A GIF was playing when the screen went idle (blank); it is started again when the user returns.
+    let mut gif_resume_after_idle = false;
     #[cfg(target_os = "windows")]
     let mut go_runner: Option<go_bridge::Runner> = None;
     #[cfg(target_os = "windows")]
@@ -1800,10 +1914,15 @@ fn main() {
     #[cfg(target_os = "windows")]
     let mut go_frame: Option<Arc<Bitmap>> = None;
     #[cfg(target_os = "windows")]
-    let mut go_last_attempt = Instant::now() - Duration::from_secs(3);
+    let mut go_last_attempt = ago(Duration::from_secs(3));
+    // How often in a row the helper stopped (or could not be started) within seconds, and when it was started.
+    #[cfg(target_os = "windows")]
+    let mut go_failures: u32 = 0;
+    #[cfg(target_os = "windows")]
+    let mut go_started = Instant::now();
     // Live OLED mirror of the settings window (see the preview block at the end of the loop).
     #[cfg(target_os = "windows")]
-    let mut last_preview_tick = Instant::now() - Duration::from_secs(1);
+    let mut last_preview_tick = ago(Duration::from_secs(1));
     #[cfg(target_os = "windows")]
     let mut last_preview: Option<(Bitmap, bool)> = None;
     #[cfg(target_os = "windows")]
@@ -1827,19 +1946,27 @@ fn main() {
     let mut ui_was_active = false;
 
     // Wait for connect
-    let mut last_connect = Instant::now() - Duration::from_secs(1);
+    let mut last_connect = ago(Duration::from_secs(1));
+    // Tray clicks that need the connected device (brightness, GIF start/stop, status icons ...) cannot be carried
+    // out yet. They used to be thrown away, although the tray had already flipped the menu entry; they are handed to
+    // the main loop as soon as the device is there.
+    let mut deferred: Vec<MenuEvent> = Vec::new();
     let dev = loop {
         #[cfg(target_os = "windows")]
         settings_ui::poll();
         let mut event = sdl::SDL_Event::default();
         while unsafe { sdl::SDL_PollEvent(&mut event) } {
             if sdl::SDL_EventType(unsafe { event.r#type }) == sdl::SDL_EVENT_QUIT {
+                unsafe { sdl::SDL_DestroyTray(tray) };
                 return;
             }
         }
         while let Ok(event) = menu_rx.try_recv() {
             match event {
-                MenuEvent::Quit => return,
+                MenuEvent::Quit => {
+                    unsafe { sdl::SDL_DestroyTray(tray) };
+                    return;
+                }
                 #[cfg(target_os = "windows")]
                 MenuEvent::OpenSettings => settings_ui::open(),
                 #[cfg(target_os = "windows")]
@@ -1861,6 +1988,7 @@ fn main() {
                     config.language = language;
                     settings_ui::localize(language);
                     translate_tray(language);
+                    set_tray_tooltip(tray, language, false);
                     save_config(&config);
                 }
                 #[cfg(target_os = "windows")]
@@ -1872,6 +2000,12 @@ fn main() {
                 MenuEvent::SetClockStyle(style) => {
                     config.clock_style=style;
                     update_clock_style_checked(&tm_clock_style_entries,style);
+                    // Choosing a clock leaves a Go animation (as in the main loop).
+                    #[cfg(target_os = "windows")]
+                    {
+                        config.go_animation = None;
+                        tm_go_anim_radio.update_checked(None);
+                    }
                     save_config(&config);
                 }
                 #[cfg(target_os = "windows")]
@@ -1879,6 +2013,11 @@ fn main() {
                     config.go_profile_filename = filename;
                     config.go_animation = Some(kind);
                     tm_go_anim_radio.update_checked(Some(kind));
+                    // A Go animation and a GIF never share the screen: the GIF that was going to start is dropped.
+                    config.animation_playing = false;
+                    animation_frames = None;
+                    unsafe { sdl::SDL_SetTrayEntryChecked(tm_animation_check, false) };
+                    go_failures = 0;
                     save_config(&config);
                     // The renderer will start once the SteelSeries device reconnects.
                 }
@@ -1886,12 +2025,22 @@ fn main() {
                     config.go_animation=anim;
                     config.go_profile_filename=None;
                     #[cfg(target_os = "windows")]
-                    tm_go_anim_radio.update_checked(anim);
+                    {
+                        tm_go_anim_radio.update_checked(anim);
+                        go_failures = 0;
+                    }
+                    if anim.is_some() {
+                        config.animation_playing = false;
+                        animation_frames = None;
+                        unsafe { sdl::SDL_SetTrayEntryChecked(tm_animation_check, false) };
+                    }
                     save_config(&config);
                 }
-                _ => {},
+                other => deferred.push(other),
             }
         }
+        // A decoded GIF is not kept in memory while nothing can show it.
+        studio_slot.release_if_idle();
         #[cfg(target_os = "windows")]
         settings_ui::sync(&config);
         if last_connect.elapsed() >= Duration::from_secs(1) {
@@ -1915,8 +2064,16 @@ fn main() {
         sleep(loop_pause(false, 0));
     };
     unsafe { sdl::SDL_SetTrayIcon(tray, icon.surf) };
+    set_tray_tooltip(tray, config.language, true);
     #[cfg(target_os = "windows")]
-    settings_ui::set_connected(true);
+    {
+        settings_ui::set_device_name(gxoled_lib::product_name(dev.product_id));
+        settings_ui::set_connected(true);
+    }
+    // Handled by the main loop below, together with everything the user clicks from now on.
+    for event in deferred {
+        let _ = menu_tx.send(event);
+    }
     let mut dev = DrawDevice::new(dev, 30);
     if let Some((font_path, font_size)) = config.font.as_ref().map(|font| (font.path.clone(), font.size)) {
         match TextRenderer::load_from_file(&font_path, font_size) {
@@ -1945,11 +2102,13 @@ fn main() {
         dev.set_brightness(brightness);
     }
     if config.animation_playing {
-        if let Some(frames) = &animation_frames {
+        // The layer takes the frames: no second copy stays behind, and a later Start renders the GIF afresh with
+        // whatever the sliders say by then (a kept copy used to be replayed after the screen had been idle).
+        if let Some(frames) = animation_frames.take() {
             let first = frames[0].bitmap.clone();
             let (x, y) = dev.center_bitmap(&first);
             animation_layer = Some(dev.add_layer(DrawLayer::Animation {
-                frames: frames.clone(),
+                frames,
                 x,
                 y,
                 follow_fps: false,
@@ -2182,14 +2341,17 @@ fn main() {
                     config.go_profile_filename = filename;
                     config.go_animation = Some(kind);
                     tm_go_anim_radio.update_checked(Some(kind));
-                    save_config(&config);
                     // Replace the current renderer, even when the underlying animation type is unchanged.
                     // (The running-loop handler below also releases the OLED frame.)
                     go_runner=None;
+                    go_failures=0;
                     if let Some(id)=go_layer.take(){dev.remove_layer(id);}
                     go_frame=None;
                     if let Some(id)=animation_layer.take(){dev.remove_layer(id);}
                     config.animation_playing=false;
+                    animation_frames=None;
+                    // The tray shows the GIF as stopped, so the next Start is a Start (it used to need two clicks).
+                    unsafe {sdl::SDL_SetTrayEntryChecked(tm_animation_check,false);}
                     dev.remove_layers(&time_layers);time_layers.clear();
                     dev.remove_layers(&media_layers);media_layers.clear();
                     last_media=None;
@@ -2200,6 +2362,7 @@ fn main() {
                     #[cfg(target_os = "windows")]
                     {
                         go_runner = None;  // Drop kills Go child; no background worker remains.
+                        go_failures = 0;
                         if let Some(id) = go_layer.take() {dev.remove_layer(id);}
                         go_frame = None;
                         config.go_animation = anim;
@@ -2208,6 +2371,7 @@ fn main() {
                         if anim.is_some() {
                             if let Some(id)=animation_layer.take() {dev.remove_layer(id);}
                             config.animation_playing=false;
+                            animation_frames=None;
                             unsafe {sdl::SDL_SetTrayEntryChecked(tm_animation_check,false);}
                             dev.remove_layers(&time_layers);time_layers.clear();
                             dev.remove_layers(&media_layers);media_layers.clear();
@@ -2224,6 +2388,7 @@ fn main() {
                     config.language = language;
                     settings_ui::localize(language);
                     translate_tray(language);
+                    set_tray_tooltip(tray, language, oled_available);
                     config_updated = true;
                 }
                 #[cfg(target_os = "windows")]
@@ -2339,18 +2504,21 @@ fn main() {
                     let enabled = unsafe { sdl::SDL_GetTrayEntryChecked(tm_animation_check) };
                     config_updated = true;
                     if enabled {
-                        #[cfg(target_os = "windows")]
-                        {
-                            go_runner = None;
-                            if let Some(id)=go_layer.take(){dev.remove_layer(id);}
-                            go_frame = None;
-                            config.go_animation=None;
-                            tm_go_anim_radio.update_checked(None);
-                        }
+                        // Load the GIF first: one that cannot be loaded must not take a running Go animation away.
                         if animation_frames.is_none() {
+                            studio_slot.retry();
                             animation_frames = studio_slot.get(&config, dev.dimensions()).map(studio_frames);
                         }
-                        if let Some(frames) = &animation_frames {
+                        if let Some(frames) = animation_frames.take() {
+                            #[cfg(target_os = "windows")]
+                            {
+                                go_runner = None;
+                                go_failures = 0;
+                                if let Some(id)=go_layer.take(){dev.remove_layer(id);}
+                                go_frame = None;
+                                config.go_animation=None;
+                                tm_go_anim_radio.update_checked(None);
+                            }
                             let first = frames[0].bitmap.clone();
                             let (x, y) = dev.center_bitmap(&first);
                             dev.remove_layers(&time_layers);
@@ -2358,11 +2526,15 @@ fn main() {
                             if let Some(id) = notif_layer.take() {
                                 dev.remove_layer(id);
                             }
+                            if let Some(id) = animation_layer.take() {
+                                dev.remove_layer(id); // never leave an earlier GIF layer running unnoticed
+                            }
                             time_layers.clear();
                             media_layers.clear();
                             last_media = None;
+                            // The render thread owns the frames from here on.
                             animation_layer = Some(dev.add_layer(DrawLayer::Animation {
-                                frames: frames.clone(),
+                                frames,
                                 x,
                                 y,
                                 follow_fps: false,
@@ -2370,14 +2542,21 @@ fn main() {
                             }));
                             dev.play();
                             config.animation_playing = true;
-                            animation_frames=None; // Render thread owns its cloned GIF frames.
                         } else {
                             config.animation_playing = false;
                             unsafe { sdl::SDL_SetTrayEntryChecked(tm_animation_check, false) };
+                            let message = match &config.animation_path {
+                                None => say(&config, "Add a GIF first.", "Önce bir GIF ekleyin.").to_owned(),
+                                Some(path) => format!(
+                                    "{}\n{}",
+                                    say(&config, "The GIF could not be loaded:", "GIF yüklenemedi:"),
+                                    path.display()
+                                ),
+                            };
                             MessageDialog::new()
                                 .set_level(MessageLevel::Error)
                                 .set_title("GxOled")
-                                .set_description("Add a GIF first.")
+                                .set_description(&message)
                                 .show();
                         }
                     } else {
@@ -2409,16 +2588,21 @@ fn main() {
                 if let Some(frames) = studio_slot.get(&config, dev.dimensions()).map(studio_frames) {
                     if let Some(first) = frames.first() {
                         let (x, y) = dev.center_bitmap(&first.bitmap);
-                        if let Some(id) = animation_layer.take() {
-                            dev.remove_layer(id);
-                        }
-                        animation_layer = Some(dev.add_layer(DrawLayer::Animation {
+                        let layer = DrawLayer::Animation {
                             frames,
                             x,
                             y,
                             follow_fps: false,
                             repeat: config.animation_settings.looping,
-                        }));
+                        };
+                        // Swapped in one step: removing and re-adding left a frame without the GIF on the screen.
+                        animation_layer = Some(match animation_layer {
+                            Some(id) => match dev.replace_layer(id, layer) {
+                                Ok(()) => id,
+                                Err(layer) => dev.add_layer(layer),
+                            },
+                            None => dev.add_layer(layer),
+                        });
                     }
                 }
             }
@@ -2440,23 +2624,60 @@ fn main() {
         #[cfg(target_os = "windows")]
         {
             let idle = config.idle_timeout && os.is_idle();
-            if !idle && oled_available && go_runner.is_none() && config.go_animation.is_some()
+            // The helper process can stop by itself: a custom profile it rejects, a crash, a virus scanner. Nothing
+            // would produce frames any more, the screen would stay blank and the loop would stay in its fast mode.
+            let mut go_trouble: Option<String> = None;
+            if !idle {
+                if let Some(runner) = go_runner.as_mut() {
+                    if !runner.is_alive() {
+                        let reason = runner.diagnostic().unwrap_or_else(|| "the animation helper stopped".to_owned());
+                        eprintln!("Go animation helper stopped: {reason}");
+                        go_runner = None;
+                        if let Some(id) = go_layer.take() {
+                            dev.remove_layer(id);
+                        }
+                        go_frame = None;
+                        // A run that lasted a while was fine until now; only quick, repeated stops count.
+                        go_failures = if go_started.elapsed() < GO_STABLE_AFTER { go_failures + 1 } else { 1 };
+                        go_trouble = Some(reason);
+                    }
+                }
+            }
+            if !idle && oled_available && go_runner.is_none() && go_trouble.is_none() && config.go_animation.is_some()
                 && go_last_attempt.elapsed()>=Duration::from_secs(2) {
                 go_last_attempt=Instant::now();
                 match go_bridge::Runner::start(config.go_animation.unwrap().arg(), config.go_profile_filename.as_deref()) {
-                    Ok(runner) => go_runner=Some(runner),
+                    Ok(runner) => {
+                        go_runner = Some(runner);
+                        go_started = Instant::now();
+                    }
                     Err(err) => {
+                        // Often a short sharing violation (a virus scanner looking at the freshly written helper).
                         eprintln!("Go animation start failed: {err}");
-                        MessageDialog::new().set_level(MessageLevel::Error)
-                            .set_title("GxOled Animation")
-                            .set_description(&format!("Could not start embedded Go renderer: {err}"))
-                            .show();
-                        config.go_animation=None;
-                        tm_go_anim_radio.update_checked(None);
-                        save_config(&config);
-                        last_time=Local::now()-TimeDelta::seconds(1);
+                        go_failures += 1;
+                        go_trouble = Some(err.to_string());
                     }
                 }
+            }
+            if let Some(reason) = go_trouble.filter(|_| go_failures >= GO_MAX_FAILURES) {
+                // It keeps failing: tell the user once and go back to the clock instead of retrying forever.
+                MessageDialog::new().set_level(MessageLevel::Error)
+                    .set_title("GxOled Animation")
+                    .set_description(&format!(
+                        "{}\n\n{reason}",
+                        say(
+                            &config,
+                            "The animation helper keeps stopping, so GxOled went back to the clock.\nIf you chose a custom profile, open it in the profile editor and check its values.",
+                            "Animasyon yardımcısı sürekli duruyor, bu yüzden GxOled saate döndü.\nÖzel bir profil seçtiyseniz profil düzenleyicide değerlerini kontrol edin.",
+                        ),
+                    ))
+                    .show();
+                config.go_animation = None;
+                config.go_profile_filename = None;
+                tm_go_anim_radio.update_checked(None);
+                save_config(&config);
+                go_failures = 0;
+                last_time = Local::now() - TimeDelta::seconds(1);
             }
             if !idle {
                 if let Some(runner)=&go_runner {
@@ -2485,8 +2706,10 @@ fn main() {
             match event {
                 DrawEvent::DeviceDisconnected => {
                     unsafe { sdl::SDL_SetTrayIcon(tray, icon_error.surf) };
+                    set_tray_tooltip(tray, config.language, false);
                     #[cfg(target_os = "windows")]
                     {
+                        settings_ui::set_connected(false);
                         oled_available=false;
                         go_runner=None;
                         if let Some(id)=go_layer.take(){dev.remove_layer(id);}
@@ -2495,8 +2718,12 @@ fn main() {
                 },
                 DrawEvent::DeviceReconnected => {
                     #[cfg(target_os = "windows")]
-                    { oled_available=true; }
+                    {
+                        oled_available=true;
+                        settings_ui::set_connected(true);
+                    }
                     unsafe { sdl::SDL_SetTrayIcon(tray, icon.surf) }
+                    set_tray_tooltip(tray, config.language, true);
                     dev.probe(); // re-probe when base station reappears
                     // USB reconnection may reset the device-side brightness level.
                     if let Some(brightness) = config.screen_brightness {
@@ -2558,7 +2785,17 @@ fn main() {
             }
 
             // Check if idle
-            if config.idle_timeout && os.is_idle() {
+            let idle_now = config.idle_timeout && os.is_idle();
+            if !idle_now && gif_resume_after_idle {
+                // The user is back: a GIF that was playing when the screen went blank plays again (a Go animation
+                // already does, and so does the clock). Done through the normal Start so it behaves the same.
+                gif_resume_after_idle = false;
+                if config.go_animation.is_none() && config.animation_path.is_some() && animation_layer.is_none() {
+                    unsafe { sdl::SDL_SetTrayEntryChecked(tm_animation_check, true) };
+                    let _ = menu_tx.send(MenuEvent::ToggleAnimation);
+                }
+            }
+            if idle_now {
                 #[cfg(target_os = "windows")]
                 {
                     go_runner=None;
@@ -2571,6 +2808,7 @@ fn main() {
                 if animation_layer.take().is_some() {
                     config.animation_playing = false;
                     save_config(&config);
+                    gif_resume_after_idle = true;
                 }
                 unsafe { sdl::SDL_SetTrayEntryChecked(tm_animation_check, false) };
             } else if animation_layer.is_some() || (cfg!(target_os = "windows") && config.go_animation.is_some()) {
@@ -2741,7 +2979,7 @@ fn main() {
                 ui_was_active = ui_active;
                 last_preview = None; // drawn afresh when a window appears
                 if ui_active {
-                    last_preview_tick = Instant::now() - Duration::from_secs(1);
+                    last_preview_tick = ago(Duration::from_secs(1));
                 } else {
                     // The window went away: the editor's preview clock stops, and what only the windows needed
                     // (decoded GIF, preview frames, pixel buffers) is dropped.
@@ -2800,12 +3038,20 @@ fn main() {
     }
     #[cfg(target_os = "windows")]
     drop(go_runner);
+    // Changes made in the last moments (the same pass as the Quit click, a slider that was still being applied).
+    save_config(&config);
+    // Take the icon out of the notification area now; otherwise Windows leaves a dead icon there until the mouse
+    // passes over it.
+    unsafe { sdl::SDL_DestroyTray(tray) };
     let dev = dev.stop();
-    match config.quit_mode {
+    let left = match config.quit_mode {
         ConfigQuitMode::Screensaver => dev.draw(&Bitmap::new(dev.width, dev.height, false), 0, 0),
         ConfigQuitMode::StockUi => dev.return_to_ui(),
+    };
+    if let Err(error) = left {
+        // The base station was unplugged: there is nothing left to hand over, and quitting must not panic.
+        eprintln!("Could not leave the display in its final state: {error:#}");
     }
-    .unwrap();
 }
 
 #[cfg(test)]
@@ -2838,7 +3084,9 @@ mod single_instance_tests {
 
     #[test]
     fn second_call_in_the_same_process_sees_the_mutex() {
-        assert!(!another_instance_is_running());
+        // The first call may already see a GxOled that is running on this machine; whatever it answers, it has
+        // created the mutex, so the second one must see it.
+        let _ = another_instance_is_running();
         assert!(another_instance_is_running());
     }
 }
@@ -3001,12 +3249,99 @@ mod gif_studio_tests {
         assert!(slot.get(&config, SCREEN_DIMS).is_some());
         slot.release_if_idle();
         assert!(slot.studio.is_some(), "still in use");
-        slot.last_used = Instant::now() - StudioSlot::IDLE_RELEASE - Duration::from_secs(1);
+        slot.last_used = ago(StudioSlot::IDLE_RELEASE + Duration::from_secs(1));
         slot.release_if_idle();
         assert!(slot.studio.is_none(), "released after being idle");
         // It simply loads again when needed.
         assert!(slot.get(&config, SCREEN_DIMS).is_some());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod startup_entry_tests {
+    use super::startup_command_target;
+    use std::path::PathBuf;
+
+    #[test]
+    fn the_program_of_a_startup_command_is_found() {
+        assert_eq!(
+            startup_command_target(r#""C:\Program Files\GxOled\gxoled.exe""#),
+            Some(PathBuf::from(r"C:\Program Files\GxOled\gxoled.exe"))
+        );
+        assert_eq!(
+            startup_command_target(r#""D:\tools\gxoled.exe" --classic-ui"#),
+            Some(PathBuf::from(r"D:\tools\gxoled.exe"))
+        );
+        assert_eq!(startup_command_target(r"C:\tools\GxOled.EXE -x"), Some(PathBuf::from(r"C:\tools\GxOled.EXE")));
+        assert_eq!(startup_command_target("\"C:\\x\\a.exe\"\0\0"), Some(PathBuf::from(r"C:\x\a.exe")));
+    }
+
+    #[test]
+    fn a_command_without_a_program_gives_nothing() {
+        assert_eq!(startup_command_target(""), None);
+        assert_eq!(startup_command_target("\"\""), None);
+        assert_eq!(startup_command_target("\"C:\\unterminated"), None);
+        assert_eq!(startup_command_target("rundll32 something"), None);
+    }
+}
+
+#[cfg(test)]
+mod config_file_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("gxoled_app_config_{}_{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_first_launch_migrates_the_legacy_file_once() {
+        let dir = scratch("migrate");
+        let (path, legacy) = (dir.join("GxOled").join("config.toml"), dir.join("ggoled_app.toml"));
+        std::fs::write(&legacy, "language = \"Turkish\"\n").unwrap();
+        let config = Config::load_from(&path, Some(&legacy));
+        assert!(config.language == ConfigLanguage::Turkish);
+        assert!(path.exists(), "the migrated settings are written to the new location");
+        assert!(legacy.exists(), "the old file stays as a backup");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_broken_settings_file_is_kept_and_never_replaced_by_the_legacy_one() {
+        let dir = scratch("broken");
+        let (path, legacy) = (dir.join("config.toml"), dir.join("ggoled_app.toml"));
+        std::fs::write(&legacy, "language = \"Turkish\"\n").unwrap();
+        std::fs::write(&path, "language = \"Klingon\"\nclock_style = [oops\n").unwrap();
+        let config = Config::load_from(&path, Some(&legacy));
+        assert!(config.language == Config::default().language, "defaults, not the legacy settings");
+        let backup = dir.join("config.toml.bad");
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "language = \"Klingon\"\nclock_style = [oops\n");
+        assert!(std::fs::read_to_string(&path).unwrap().contains("Klingon"), "loading alone does not rewrite the file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn settings_that_were_saved_come_back_and_make_no_backup() {
+        let dir = scratch("roundtrip");
+        let path = dir.join("config.toml");
+        let mut config = Config::default();
+        config.language = ConfigLanguage::Turkish;
+        config.save_to(&path).unwrap();
+        assert!(Config::load_from(&path, None).language == ConfigLanguage::Turkish);
+        assert!(!dir.join("config.toml.bad").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn nothing_at_all_gives_the_defaults() {
+        let dir = scratch("empty");
+        let config = Config::load_from(&dir.join("config.toml"), Some(&dir.join("ggoled_app.toml")));
+        assert!(config.language == Config::default().language);
+        assert!(!dir.join("config.toml").exists(), "reading never creates the file");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

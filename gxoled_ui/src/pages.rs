@@ -801,7 +801,7 @@ fn display(c: &mut Ctx, l: &Layout, y: f32) -> f32 {
         "moon",
         Tone::Indigo,
         c.t("Screensaver when idle", "Boştayken ekran koruyucu"),
-        c.t("Dim and animate when idle", "Boştayken karart ve hareketlendir"),
+        c.t("Blank the display after a minute without input", "Bir dakika işlem yapılmazsa ekranı karart"),
     );
     let y = idle.bottom() + GAP;
 
@@ -941,7 +941,7 @@ fn about_left(c: &mut Ctx, l: &Layout, y: f32) -> f32 {
     } else {
         (Rect::new(l.lx + 24.0, bt, hw, 44.0), Rect::new(l.lx + 24.0 + hw + 14.0, bt, hw, 44.0))
     };
-    c.button(b1, ids::GITHUB, "GitHub · MehmetNY/GxOled", ButtonKind::Secondary, Some("git-branch"));
+    c.button(b1, ids::GITHUB, "GitHub · GxOled Advanced", ButtonKind::Secondary, Some("git-branch"));
     c.button(b2, ids::KOFI, "Ko-fi · Support GxOled", ButtonKind::Primary, Some("heart"));
 
     let credits = c.t(
@@ -955,8 +955,8 @@ fn about_left(c: &mut Ctx, l: &Layout, y: f32) -> f32 {
     c.paragraph(l.lx + 24.0, by - 6.0, text_w, credits, 15.0, p.text_dim);
 
     let lic = c.t(
-        "GxOled is free software under the GNU GPL v3.\nInterface font: Inter (SIL OFL 1.1). Icons: Lucide (ISC). Rendering: resvg (MPL-2.0 / Apache-2.0 / MIT).",
-        "GxOled, GNU GPL v3 altında özgür yazılımdır.\nArayüz yazı tipi: Inter (SIL OFL 1.1). Simgeler: Lucide (ISC). Çizim: resvg (MPL-2.0 / Apache-2.0 / MIT).",
+        "GxOled is free software under the GNU GPL v3.\nInterface font: Inter (SIL OFL 1.1). Icons: Lucide (ISC). Rendering: resvg (Apache-2.0 / MIT).",
+        "GxOled, GNU GPL v3 altında özgür yazılımdır.\nArayüz yazı tipi: Inter (SIL OFL 1.1). Simgeler: Lucide (ISC). Çizim: resvg (Apache-2.0 / MIT).",
     );
     let h2 = c.paragraph_height(text_w, lic, 13.5);
     let y3 = card2.bottom() + GAP;

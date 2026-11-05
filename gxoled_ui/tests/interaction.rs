@@ -351,6 +351,43 @@ fn profile_list_wheel_scrolls_the_list_not_the_page() {
 }
 
 #[test]
+fn text_with_forbidden_xml_characters_does_not_blank_the_window() {
+    // Profile names, GIF names and OS error messages come from outside; one control character in them used to
+    // make the SVG unparseable, which left the window empty.
+    let mut ui = ui(Page::Animations, W, 700, 1.0);
+    ui.model.profiles[0] = "bad\u{1}name\u{FFFF}".to_owned();
+    ui.model.studio.name = "gif\u{8}.gif".to_owned();
+    ui.invalidate();
+    let frame = ui.frame().expect("the page must still render");
+    let first = &frame.rgba[..4];
+    assert!(frame.rgba.chunks_exact(4).any(|p| p != first));
+}
+
+#[test]
+fn a_scrolled_profile_list_that_shrinks_shows_its_first_rows_again() {
+    let mut ui = ui(Page::Animations, W, 600, 1.0);
+    let visible = gxoled_ui::pages::list_visible_rows();
+    let first = find(&ui, ids::LIST_BASE);
+    let (x, y) = centre(&ui, &first, W, 1.0);
+    ui.wheel(x, y, -1.0);
+    ui.wheel(x, y, -1.0);
+    ui.frame();
+    assert!(!ui.hits().iter().any(|h| h.id == ids::LIST_BASE), "scrolled down: row 0 is out of view");
+    // Delete profiles until everything fits: nothing can be scrolled any more, so row 0 has to be back.
+    ui.model.profiles.truncate(visible);
+    ui.invalidate();
+    ui.frame();
+    for row in 0..visible as u32 {
+        assert!(ui.hits().iter().any(|h| h.id == ids::LIST_BASE + row), "row {row} is missing after the list shrank");
+    }
+    // One row more than fits: the list scrolls again, but never beyond the last full page.
+    ui.model.profiles.push("one more".into());
+    ui.invalidate();
+    ui.frame();
+    assert!(ui.hits().iter().any(|h| h.id == ids::LIST_BASE));
+}
+
+#[test]
 fn arrow_keys_move_the_profile_selection() {
     let mut ui = ui(Page::Animations, W, 1100, 1.0);
     click(&mut ui, ids::LIST_BASE + 1);

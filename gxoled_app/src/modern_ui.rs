@@ -51,6 +51,8 @@ struct Bridge {
     selected: usize,
     qr: Option<Image>,
     connected: bool,
+    /// Product name of the connected base station (empty until one is found).
+    device_name: String,
     oled: Vec<bool>,
     oled_live: bool,
     studio: StudioModel,
@@ -216,6 +218,7 @@ pub fn init(tx: Sender<MenuEvent>, config: &Config) {
             selected: 0,
             qr: None,
             connected: false,
+            device_name: String::new(),
             oled: vec![false; 128 * 64],
             oled_live: true,
             studio: StudioModel::default(),
@@ -285,6 +288,9 @@ fn ensure_settings() -> Result<(), String> {
         ui.model.version = version_label();
         ui.model.qr = b.qr.clone();
         ui.model.connected = b.connected;
+        if !b.device_name.is_empty() {
+            ui.model.device_name = b.device_name.clone();
+        }
         ui.model.profiles = labels(&b.entries);
         ui.model.profile_selected = b.selected.min(b.entries.len().saturating_sub(1));
         ui.model.set_oled_bitmap(b.oled.iter().copied());
@@ -378,6 +384,15 @@ pub fn set_connected(connected: bool) {
     with_bridge(|b| b.connected = connected);
     modern_window::with_ui(Kind::Settings, |ui| {
         ui.model.connected = connected;
+        ui.invalidate();
+    });
+}
+
+/// Name of the base station that was found (shown in the header while connected).
+pub fn set_device_name(name: &str) {
+    with_bridge(|b| b.device_name = name.to_owned());
+    modern_window::with_ui(Kind::Settings, |ui| {
+        ui.model.device_name = name.to_owned();
         ui.invalidate();
     });
 }

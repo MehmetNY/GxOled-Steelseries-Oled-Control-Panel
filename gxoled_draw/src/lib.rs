@@ -10,6 +10,7 @@ use image::{AnimationDecoder, ImageDecoder, ImageFormat, ImageReader, codecs::gi
 use parking_lot::{Mutex, MutexGuard};
 use rusttype::{Font, Scale, point};
 use std::{
+    borrow::Cow,
     collections::BTreeMap,
     io::BufReader,
     path::PathBuf,
@@ -23,6 +24,20 @@ use std::{
 pub struct TextRenderer {
     font: Font<'static>,
     size: f32,
+}
+
+/// Plain stand-in for a Turkish letter. The bundled PixelOperator font has ç ö ü ı but not ş Ş ğ Ğ İ, which
+/// would otherwise be drawn as an empty box in a media title such as "Şarkı". It is only used where the font
+/// really has no glyph, so a custom font that has these letters keeps them.
+fn plain_letter(c: char) -> Option<char> {
+    match c {
+        'ş' => Some('s'),
+        'Ş' => Some('S'),
+        'ğ' => Some('g'),
+        'Ğ' => Some('G'),
+        'İ' => Some('I'),
+        _ => None,
+    }
 }
 impl TextRenderer {
     pub fn load_from_file(path: &PathBuf, size: f32) -> anyhow::Result<Self> {
@@ -64,13 +79,22 @@ impl TextRenderer {
     pub fn render_lines(&self, text: &str) -> Vec<Bitmap> {
         self.render_lines_at_size(text, self.size)
     }
+    /// `line` with the Turkish letters this font has no glyph for replaced by their plain Latin shape.
+    fn without_missing_letters<'a>(&self, line: &'a str) -> Cow<'a, str> {
+        let missing = |c: char| plain_letter(c).is_some() && self.font.glyph(c).id().0 == 0;
+        if !line.chars().any(missing) {
+            return Cow::Borrowed(line);
+        }
+        Cow::Owned(line.chars().map(|c| if missing(c) { plain_letter(c).unwrap_or(c) } else { c }).collect())
+    }
     pub fn render_lines_at_size(&self, text: &str, size: f32) -> Vec<Bitmap> {
         let clean_text = text.replace('\r', "");
         let text_lines = clean_text.split('\n');
         let scale = Scale::uniform(size);
         text_lines
             .map(|text_line| {
-                let glyphs: Vec<_> = self.font.layout(text_line, scale, point(0.0, 0.0)).collect();
+                let text_line = self.without_missing_letters(text_line);
+                let glyphs: Vec<_> = self.font.layout(&text_line, scale, point(0.0, 0.0)).collect();
                 let mut line_w_offset = 0;
                 let mut line_h_offset = 0;
                 let mut line_w = 0;
@@ -302,9 +326,20 @@ fn animation_frame_delay(frame: &Frame) -> Duration {
         .max(Duration::from_millis(10))
 }
 
+/// The moment the frame after `due` is due, given that the render loop only looks at `now`.
+///
+/// It is counted from when the previous frame was *due*, not from the render tick that noticed it: the loop
+/// runs every 33 ms, so counting from `now` rounded every delay up to whole ticks (a 40 ms frame stayed 67 ms,
+/// 25 fps GIFs played about 40 % slower than in the GIF Studio preview and the exported file). When the loop is
+/// a whole frame or more behind (frames shorter than a tick, or a stall such as the volume screen or a USB
+/// hiccup) the clock restarts from `now`: one frame per tick at most and no burst of catch-up frames.
+fn next_due(due: Instant, delay: Duration, now: Instant) -> Instant {
+    let ideal = due + delay;
+    if ideal > now { ideal } else { now + delay }
+}
+
 /// Initialize the first frame's display duration, then advance at most one frame per render
-/// cycle. Scheduling relative to the current render time prevents delayed frames from causing a
-/// burst of rapid catch-up frames, which the OLED cannot display usefully at its fixed refresh rate.
+/// cycle (the OLED cannot show catch-up bursts usefully at its fixed refresh rate).
 fn update_animation_timing(state: &mut AnimState, frames: &[Frame], now: Instant, repeat: bool) {
     if frames.is_empty() {
         return;
@@ -324,7 +359,7 @@ fn update_animation_timing(state: &mut AnimState, frames: &[Frame], now: Instant
             return;
         }
         state.ticks = (state.ticks + 1) % frames.len();
-        state.next_update = now + animation_frame_delay(&frames[state.ticks]);
+        state.next_update = next_due(state.next_update, animation_frame_delay(&frames[state.ticks]), now);
     }
 }
 struct ScrollState {
@@ -883,7 +918,7 @@ impl GifPreview {
             None => self.due = Some(now + animation_frame_delay(&self.frames[0])),
             Some(due) if now >= due => {
                 self.index = (self.index + 1) % self.frames.len();
-                self.due = Some(now + animation_frame_delay(&self.frames[self.index]));
+                self.due = Some(next_due(due, animation_frame_delay(&self.frames[self.index]), now));
             }
             _ => {}
         }
@@ -1422,6 +1457,105 @@ mod animation_tests {
         let mut s = state(t0);
         update_animation_timing(&mut s, &[], t0, false);
         assert_eq!(s.ticks, 0);
+    }
+
+    /// Frame changes of a two-frame loop with `delay_ms` per frame, rendered every 33.3 ms for `seconds`.
+    fn changes_in(seconds: u64, delay_ms: u64) -> u64 {
+        let f: Vec<Frame> = (0..2)
+            .map(|_| Frame { bitmap: Arc::new(Bitmap::new(2, 2, false)), delay: Some(Duration::from_millis(delay_ms)) })
+            .collect();
+        let t0 = Instant::now();
+        let mut s = state(t0);
+        let mut changes = 0;
+        let mut last = 0;
+        // Render ticks of the 30 fps loop, in microseconds.
+        for tick in 0..(seconds * 30) {
+            let now = t0 + Duration::from_micros(tick * 33_333);
+            update_animation_timing(&mut s, &f, now, true);
+            if s.ticks != last {
+                changes += 1;
+                last = s.ticks;
+            }
+        }
+        changes
+    }
+
+    #[test]
+    fn delays_between_render_ticks_are_kept_on_average() {
+        // 40 ms per frame = 25 frames per second. Counting from the render tick that noticed the frame made
+        // this 15 per second (67 ms per frame).
+        let n = changes_in(10, 40);
+        assert!((245..=255).contains(&n), "25 fps over 10 s should change ~250 times, changed {n}");
+        // 50 ms (a very common GIF speed) = 20 per second.
+        let n = changes_in(10, 50);
+        assert!((195..=205).contains(&n), "20 fps over 10 s should change ~200 times, changed {n}");
+        // 100 ms is exactly three ticks.
+        let n = changes_in(10, 100);
+        assert!((98..=102).contains(&n), "10 fps over 10 s should change ~100 times, changed {n}");
+    }
+
+    #[test]
+    fn frames_faster_than_the_render_loop_do_not_burst() {
+        // 10 ms frames cannot be shown at 30 fps: one change per tick at most (the first tick only starts the
+        // clock), never several at once.
+        let n = changes_in(10, 10);
+        assert_eq!(n, 299, "one change per render tick, no catch-up");
+    }
+
+    #[test]
+    fn a_stall_is_not_followed_by_a_burst() {
+        let f = frames(4); // 100 ms each
+        let t0 = Instant::now();
+        let mut s = state(t0);
+        update_animation_timing(&mut s, &f, t0, true);
+        // The render loop stalls for 5 s (volume screen, USB hiccup) ...
+        let after = t0 + Duration::from_secs(5);
+        update_animation_timing(&mut s, &f, after, true);
+        assert_eq!(s.ticks, 1);
+        // ... and the next ticks keep that frame for its whole delay instead of rushing on.
+        update_animation_timing(&mut s, &f, after + Duration::from_millis(33), true);
+        update_animation_timing(&mut s, &f, after + Duration::from_millis(66), true);
+        assert_eq!(s.ticks, 1, "the next frame is due a full delay after the stall");
+        update_animation_timing(&mut s, &f, after + Duration::from_millis(101), true);
+        assert_eq!(s.ticks, 2);
+    }
+
+    #[test]
+    fn next_due_counts_from_the_due_time_unless_the_loop_is_a_frame_behind() {
+        let t0 = Instant::now();
+        let ms = Duration::from_millis;
+        // A tick that is 27 ms late still keeps the schedule: the next frame stays due 40 ms after the previous one.
+        assert_eq!(next_due(t0, ms(40), t0 + ms(27)), t0 + ms(40));
+        // 40 ms behind (or more): restart from now.
+        assert_eq!(next_due(t0, ms(40), t0 + ms(500)), t0 + ms(540));
+        assert_eq!(next_due(t0, ms(40), t0 + ms(40)), t0 + ms(80));
+    }
+}
+
+#[cfg(test)]
+mod missing_glyph_tests {
+    use super::*;
+
+    #[test]
+    fn turkish_letters_without_a_glyph_are_drawn_as_plain_letters() {
+        let font = TextRenderer::new_pixel_operator();
+        // The bundled font has no ş Ş ğ Ğ İ (it would draw boxes) ...
+        for c in ['ş', 'Ş', 'ğ', 'Ğ', 'İ'] {
+            assert_eq!(font.font.glyph(c).id().0, 0, "{c} unexpectedly exists in the font: the fallback is not needed");
+        }
+        // ... so the plain shapes are used instead,
+        assert_eq!(font.render_lines("Şarkı Doğa İş"), font.render_lines("Sarkı Doga Is"));
+        assert_eq!(font.render_lines("ŞşĞğİ"), font.render_lines("SsGgI"));
+        // while letters the font has stay as they are.
+        assert_ne!(font.render_lines("ı"), font.render_lines("i"));
+        assert_eq!(font.render_lines("çöü ÇÖÜ").len(), 1);
+    }
+
+    #[test]
+    fn text_without_such_letters_is_not_copied() {
+        let font = TextRenderer::new_pixel_operator();
+        assert!(matches!(font.without_missing_letters("Hello 12:34"), Cow::Borrowed(_)));
+        assert!(matches!(font.without_missing_letters("Şarkı"), Cow::Owned(_)));
     }
 }
 

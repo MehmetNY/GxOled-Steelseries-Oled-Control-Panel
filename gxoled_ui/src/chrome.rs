@@ -122,8 +122,9 @@ fn header(c: &mut Ctx, w: f32) {
     c.sc.text_mid(x, cy, "128 X 64", &Text::new(13.5, 600, p.accent).spaced(2.0));
     let bar_x = x + c.eng.text_width("128 X 64", 13.5, 600, 2.0) + 21.0;
     c.sc.rect(Rect::new(bar_x, cy - 12.0, 1.0, 24.0), 0.0, p.divider);
-    let title = c.lang().upper(c.t("SteelSeries Base Station Control Center", "SteelSeries Base Station Kontrol Merkezi"));
-    c.sc.text_mid(bar_x + 20.0, cy, &title, &Text::new(13.5, 600, p.text).spaced(2.0));
+    // Written out in capitals: the Turkish upper-casing would turn the brand name into "STEELSERİES BASE STATİON".
+    let title = c.t("STEELSERIES BASE STATION CONTROL CENTER", "STEELSERIES BASE STATION KONTROL MERKEZİ");
+    c.sc.text_mid(bar_x + 20.0, cy, title, &Text::new(13.5, 600, p.text).spaced(2.0));
     let dot = if c.m.connected { p.green } else { p.text_muted };
     let name = if c.m.connected {
         c.m.device_name.clone()

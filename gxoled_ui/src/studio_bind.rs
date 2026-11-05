@@ -87,7 +87,7 @@ pub fn apply_slider(s: &mut Settings, id: u32, value: i32, frames: usize) -> boo
 pub fn describe(w: usize, h: usize, frames: usize, duration_ms: u64, lang: Lang) -> String {
     let secs = duration_ms as f32 / 1000.0;
     let secs = if lang == Lang::Tr { format!("{secs:.1}").replace('.', ",") } else { format!("{secs:.1}") };
-    format!("{w}×{h} · {frames} {} · {secs} {}", lang.t("frames", "kare"), lang.t("s", "sn"))
+    format!("{w}×{h} · {frames} {} · {secs} {}", lang.t(if frames == 1 { "frame" } else { "frames" }, "kare"), lang.t("s", "sn"))
 }
 
 /// Everything of the editor page except the animated previews (those are pushed separately and often).
